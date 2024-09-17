@@ -1,0 +1,14 @@
+[
+  {
+    "Class": "Belt",
+    "Width": 2,
+    "Color": "#374151",
+    "IsDirectional": true
+  },
+  {
+    "Class": "Pipe",
+    "Width": 1,
+    "Color": "#b45309",
+    "IsDirectional": false
+  }
+]

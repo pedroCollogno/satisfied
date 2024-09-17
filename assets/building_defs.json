@@ -1,0 +1,157 @@
+[
+  {
+    "Class": "Assembler",
+    "Category": "Production",
+    "Dims": { "X": 10, "Y": 15 },
+    "BeltIn": [{ "Pos": { "X": 3, "Y": 15 } }, { "Pos": { "X": 7, "Y": 15 } }],
+    "BeltOut": [{ "Pos": { "X": 5, "Y": 0 } }]
+  },
+  {
+    "Class": "AWESOME Shop",
+    "Category": "Special",
+    "Dims": { "X": 4, "Y": 6 }
+  },
+  {
+    "Class": "AWESOME Sink",
+    "Category": "Special",
+    "Dims": { "X": 16, "Y": 13 },
+    "BeltIn": [{ "Pos": { "X": 10, "Y": 13 } }]
+  },
+  {
+    "Class": "Biomass Burner",
+    "Category": "Power",
+    "Dims": { "X": 8, "Y": 8 }
+  },
+  {
+    "Class": "Blender",
+    "Category": "Production",
+    "Dims": { "X": 18, "Y": 16 },
+    "BeltIn": [
+      { "Pos": { "X": 11, "Y": 16 } },
+      { "Pos": { "X": 15, "Y": 16 } }
+    ],
+    "BeltOut": [{ "Pos": { "X": 7, "Y": 0 } }],
+    "PipeIn": [{ "Pos": { "X": 3, "Y": 16 } }, { "Pos": { "X": 7, "Y": 16 } }],
+    "PipeOut": [{ "Pos": { "X": 3, "Y": 0 } }]
+  },
+  {
+    "Class": "Blueprint Designer",
+    "Category": "Special",
+    "Dims": { "X": 40, "Y": 40 }
+  },
+  {
+    "Class": "Coal Generator",
+    "Category": "Power",
+    "Dims": { "X": 10, "Y": 26 },
+    "BeltIn": [{ "Pos": { "X": 3, "Y": 26 } }],
+    "PipeIn": [{ "Pos": { "X": 7, "Y": 26 } }]
+  },
+  {
+    "Class": "Constructor",
+    "Category": "Production",
+    "Dims": { "X": 8, "Y": 10 },
+    "BeltIn": [{ "Pos": { "X": 4, "Y": 10 } }],
+    "BeltOut": [{ "Pos": { "X": 4, "Y": 0 } }]
+  },
+  {
+    "Class": "Foundry",
+    "Category": "Production",
+    "Dims": { "X": 10, "Y": 9 },
+    "BeltIn": [{ "Pos": { "X": 4, "Y": 9 } }, { "Pos": { "X": 8, "Y": 9 } }],
+    "BeltOut": [{ "Pos": { "X": 4, "Y": 0 } }]
+  },
+  {
+    "Class": "Manufacturer",
+    "Category": "Production",
+    "Dims": { "X": 18, "Y": 19 },
+    "BeltIn": [
+      { "Pos": { "X": 3, "Y": 19 } },
+      { "Pos": { "X": 7, "Y": 19 } },
+      { "Pos": { "X": 11, "Y": 19 } },
+      { "Pos": { "X": 15, "Y": 19 } }
+    ],
+    "BeltOut": [{ "Pos": { "X": 9, "Y": 0 } }]
+  },
+  {
+    "Class": "Miner Mk.1",
+    "Category": "Production",
+    "Dims": { "X": 6, "Y": 14 },
+    "BeltOut": [{ "Pos": { "X": 3, "Y": 0 } }]
+  },
+  {
+    "Class": "Miner Mk.2",
+    "Category": "Production",
+    "Dims": { "X": 6, "Y": 14 },
+    "BeltOut": [{ "Pos": { "X": 3, "Y": 0 } }]
+  },
+  {
+    "Class": "Miner Mk.3",
+    "Category": "Production",
+    "Dims": { "X": 6, "Y": 14 },
+    "BeltOut": [{ "Pos": { "X": 3, "Y": 0 } }]
+  },
+  {
+    "Class": "Oil Extractor",
+    "Category": "Production",
+    "Dims": { "X": 8, "Y": 13 },
+    "PipeOut": [{ "Pos": { "X": 4, "Y": 0 } }]
+  },
+  {
+    "Class": "Packager",
+    "Category": "Production",
+    "Dims": { "X": 8, "Y": 8 },
+    "BeltIn": [{ "Pos": { "X": 4, "Y": 8 } }],
+    "BeltOut": [{ "Pos": { "X": 4, "Y": 0 } }],
+    "PipeIn": [{ "Pos": { "X": 4, "Y": 8 } }],
+    "PipeOut": [{ "Pos": { "X": 4, "Y": 0 } }]
+  },
+  {
+    "Class": "Particle Accelerator",
+    "Category": "Production",
+    "Dims": { "X": 38, "Y": 24 },
+    "BeltIn": [
+      { "Pos": { "X": 31, "Y": 24 } },
+      { "Pos": { "X": 35, "Y": 24 } }
+    ],
+    "BeltOut": [{ "Pos": { "X": 33, "Y": 0 } }]
+  },
+  {
+    "Class": "Refinery",
+    "Category": "Production",
+    "Dims": { "X": 10, "Y": 20 },
+    "BeltIn": [{ "Pos": { "X": 7, "Y": 20 } }],
+    "BeltOut": [{ "Pos": { "X": 7, "Y": 0 } }],
+    "PipeIn": [{ "Pos": { "X": 3, "Y": 20 } }],
+    "PipeOut": [{ "Pos": { "X": 3, "Y": 0 } }]
+  },
+  {
+    "Class": "Ressource Well",
+    "Category": "Production",
+    "Dims": { "X": 4, "Y": 4 },
+    "PipeOut": [{ "Pos": { "X": 2, "Y": 0 } }]
+  },
+  {
+    "Class": "Smelter",
+    "Category": "Production",
+    "Dims": { "X": 6, "Y": 9 },
+    "BeltIn": [{ "Pos": { "X": 3, "Y": 9 } }],
+    "BeltOut": [{ "Pos": { "X": 3, "Y": 0 } }]
+  },
+  {
+    "Class": "Water Extractor",
+    "Category": "Production",
+    "Dims": { "X": 20, "Y": 19.5 },
+    "PipeOut": [{ "Pos": { "X": 10, "Y": 0 } }]
+  },
+  {
+    "Class": "Merger",
+    "Category": "Logistics",
+    "Dims": { "X": 4, "Y": 4 },
+    "BeltIn": [
+      { "Pos": { "X": 2, "Y": 4 } },
+      { "Pos": { "X": 0, "Y": 2 }, "Rot": 90 },
+      { "Pos": { "X": 4, "Y": 2 }, "Rot": 270 }
+    ],
+    "BeltOut": [{ "Pos": { "X": 2, "Y": 0 } }]
+  }
+]
