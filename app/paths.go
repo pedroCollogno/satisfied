@@ -27,6 +27,60 @@ func (p Path) String() string {
 
 func (p Path) Def() PathDef { return pathDefs[p.DefIdx] }
 
+func (p Path) DrawStart(state DrawState) {
+	def := p.Def()
+	if !dims.ExWorld.CheckCollisionPoint(p.Start) {
+		// skip drawing if path start is outside of the scene
+		return
+	}
+	color := state.transformColor(def.Color)
+	// Path start
+	rl.DrawCircleV(p.Start, def.Width/2, color)
+}
+
+func (p Path) DrawEnd(state DrawState) {
+	def := p.Def()
+	if !dims.ExWorld.CheckCollisionPoint(p.End) {
+		// skip drawing if path end is outside of the scene
+		return
+	}
+	color := state.transformColor(def.Color)
+	// Path end
+	rl.DrawCircleV(p.End, def.Width/2, color)
+}
+
+func (p Path) DrawBody(state DrawState) {
+	def := p.Def()
+	color := state.transformColor(def.Color)
+
+	if !CheckCollisionRecLine(dims.ExWorld, p.Start, p.End) {
+		// skip drawing if building is outside of the scene
+		return
+	}
+	// we either call p.Draw(..) or p.DrawBody(..) p.DrawStart(..) and p.DrawEnd(..)
+	app.drawCounts.Paths++
+
+	// Path body
+	rl.DrawLineEx(p.Start, p.End, def.Width, color)
+
+	if !def.IsDirectional || state == DrawShadow {
+		return
+	}
+	// Draw directional arrows
+	color = state.transformColor(colors.Gray300)
+	length := p.Start.Distance(p.End)
+	angle := -p.Start.LineAngle(p.End)
+	mat := matrix.NewTranslateV(p.Start).RotateRad(angle)
+	for x := animations.BeltOffset; x < length; x += 1 {
+		rl.DrawTriangle(
+			mat.Apply(x-0.25, 0.5),
+			mat.Apply(x+0.25, 0),
+			mat.Apply(x-0.25, -0.5),
+			color,
+		)
+	}
+}
+
 func (p Path) Draw(state DrawState) {
 	def := p.Def()
 	color := state.transformColor(def.Color)
@@ -64,11 +118,20 @@ func (p Path) Draw(state DrawState) {
 			color,
 		)
 	}
-	return
 }
 
 func (p Path) IsValid() bool {
 	return p.Start != p.End
+}
+
+// Returns true if the given position is inside the path start.
+func (p Path) CheckStartCollisionPoint(pos rl.Vector2) bool {
+	return rl.CheckCollisionPointCircle(pos, p.Start, p.Def().Width/2)
+}
+
+// Returns true if the given position is inside the path end.
+func (p Path) CheckEndCollisionPoint(pos rl.Vector2) bool {
+	return rl.CheckCollisionPointCircle(pos, p.End, p.Def().Width/2)
 }
 
 // Returns true if the given position is inside the path body.

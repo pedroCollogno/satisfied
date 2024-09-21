@@ -3,6 +3,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -27,11 +28,24 @@ func Range(i, j int) []int {
 	return r
 }
 
-// Returns a new slice with the elements at idxs
-func CopyIdxs[T any](s []T, idxs []int) []T {
-	dst := make([]T, len(idxs))
-	for i, idx := range idxs {
-		dst[i] = s[idx]
+// CopyIdxs clears dst and copies the elements at idxs from src into dst
+//
+// It reallocates of cap(dst) < len(idxs)
+func CopyIdxs[T any](dst, src []T, idxs []int) []T {
+	dst = slices.Grow(dst[:0], len(idxs))
+	for _, idx := range idxs {
+		dst = append(dst, src[idx])
+	}
+	return dst
+}
+
+// Repeat clears dst and fills it with n copies of the given value
+//
+// It reallocates of cap(dst) < n
+func Repeat[T any](dst []T, v T, n int) []T {
+	dst = slices.Grow(dst[:0], n)
+	for range n {
+		dst = append(dst, v)
 	}
 	return dst
 }

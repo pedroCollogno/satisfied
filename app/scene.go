@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 
 	"github.com/bonoboris/satisfied/log"
@@ -16,6 +15,7 @@ var scene Scene
 
 // Scene holds the scene objects (buildings and paths)
 type Scene struct {
+	ObjectCollection
 	// History of scene operations (undo / redo)
 	history []sceneOp
 	// Current history position:
@@ -28,10 +28,6 @@ type Scene struct {
 
 	// The scene object currently hovered by the mouse
 	Hovered Object
-	// Placed buildings
-	Buildings []Building
-	// Placed paths
-	Paths []Path
 	// was in modified state last frame
 	wasModified bool
 }
@@ -60,255 +56,228 @@ func (s Scene) traceState(key, val string) {
 // sceneOp (undo / redo)
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-type sceneOp interface {
-	// Do the operation
-	do(*Scene)
-	// Redo undone operation
-	redo(*Scene) Action
-	// Undo done operation
-	undo(*Scene) Action
-	// trace state
-	traceState()
-	// name (for logging)
-	name() string
+type sceneOpType string
+
+const (
+	SceneOpAdd    sceneOpType = "add"
+	SceneOpDelete sceneOpType = "delete"
+	SceneOpModify sceneOpType = "modify"
+)
+
+// sceneOp represents a scene operation
+type sceneOp struct {
+	// Type is the type of the operation
+	Type sceneOpType
+	// Sel is the selection the operation acts on (empty for [SceneOpAdd])
+	Sel ObjectSelection
+	// Old is the objects before the operation (empty for [SceneOpAdd])
+	//
+	// - in [SceneOpDelete] Old.Paths contains only the deleted paths ([ObjectSelection.FullPathIdxs])
+	// - in [SceneOpModify] Old.Paths contains all the paths ([ObjectSelection.AnyPathIdxs])
+	Old ObjectCollection
+	// New is the objects after the operation (empty for [SceneOpDelete])
+	New ObjectCollection
 }
 
-type sceneOpAdd struct {
-	paths     []Path
-	buildings []Building
-}
-
-func (op sceneOpAdd) name() string { return "add" }
-
-func (op sceneOpAdd) traceState() {
-	if log.WillTrace() {
-		for i, p := range op.paths {
-			log.Trace("scene.operation.add.paths", "i", i, "value", p)
-		}
-		for i, b := range op.buildings {
-			log.Trace("scene.operation.add.buildings", "i", i, "value", b)
-		}
+func (op sceneOp) traceState() {
+	switch op.Type {
+	case SceneOpAdd:
+		log.Trace("scene.operation", "type", "add", "New", op.New)
+	case SceneOpDelete:
+		log.Trace("scene.operation", "type", "delete", "Sel", op.Sel, "Old", op.Old)
+	case SceneOpModify:
+		log.Trace("scene.operation", "type", "modify", "Sel", op.Sel, "Old", op.Old, "New", op.New)
+	default:
+		panic("invalid scene operation type")
 	}
 }
 
-func (op *sceneOpAdd) do(s *Scene) {
-	s.Paths = append(s.Paths, op.paths...)
-	s.Buildings = append(s.Buildings, op.buildings...)
-}
-
-func (op *sceneOpAdd) redo(s *Scene) Action {
-	s.traceState("before", "add.redo")
+// do performs the operation
+func (op sceneOp) do(s *Scene) {
+	s.traceState("before", "sceneOp.do")
 	op.traceState()
-	log.Debug("scene.operation.add", "action", "redo", "num_paths", len(op.paths), "num_buildings", len(op.buildings))
-	op.do(s)
-	ss := sceneSubset{
-		buildingsIdxs: Range(len(s.Buildings)-len(op.buildings), len(s.Buildings)),
-		pathsIdxs:     Range(len(s.Paths)-len(op.paths), len(s.Paths)),
-	}
-	ss.updateBounds()
-	s.traceState("after", "add.redo")
-	return selection.doInitSceneSubset(ss)
-}
+	log.Info("scene.operation", "do", string(op.Type))
+	switch op.Type {
 
-func (op *sceneOpAdd) undo(s *Scene) Action {
-	s.traceState("before", "add.undo")
-	op.traceState()
-	log.Debug("scene.operation.add", "action", "redo", "num_paths", len(op.paths), "num_buildings", len(op.buildings))
-	s.Paths = s.Paths[:len(s.Paths)-len(op.paths)]
-	s.Buildings = s.Buildings[:len(s.Buildings)-len(op.buildings)]
-	s.traceState("after", "add.undo")
-	return app.doSwitchMode(ModeNormal, ResetAll())
-}
+	case SceneOpAdd:
+		log.Debug("scene.operation.add", "action", "do", "num_paths", len(op.New.Paths), "num_buildings", len(op.New.Buildings))
+		s.Paths = append(s.Paths, op.New.Paths...)
+		s.Buildings = append(s.Buildings, op.New.Buildings...)
 
-type sceneOpDelete struct {
-	// Indices of paths to delete
-	pathIdxs []int
-	// Deleted paths
-	paths []Path
-	// Indices of buildings to delete
-	buildingIdxs []int
-	// Deleted buildings
-	buildings []Building
-}
+	case SceneOpDelete:
+		pathIdxs := op.Sel.FullPathIdxs()
+		log.Debug("scene.operation.delete", "action", "do", "paths", pathIdxs, "buildinds", op.Sel.BuildingIdxs)
+		s.Paths = SwapDeleteMany(s.Paths, op.Sel.FullPathIdxs())
+		s.Buildings = SwapDeleteMany(s.Buildings, op.Sel.BuildingIdxs)
 
-func (op sceneOpDelete) name() string { return "delete" }
-
-func (op sceneOpDelete) traceState() {
-	if log.WillTrace() {
-		for i, p := range op.paths {
-			log.Trace("scene.operation.delete.paths", "i", i, "sceneIdx", op.pathIdxs[i], "value", p)
+	case SceneOpModify:
+		pathIdxs := op.Sel.AnyPathIdxs()
+		log.Debug("scene.operation.modify", "action", "do", "paths", pathIdxs, "buildings", op.Sel.BuildingIdxs)
+		for i, idx := range pathIdxs {
+			s.Paths[idx] = op.New.Paths[i]
 		}
-		for i, b := range op.buildings {
-			log.Trace("scene.operation.delete.buildings", "i", i, "sceneIdx", op.buildingIdxs[i], "value", b)
+		for i, idx := range op.Sel.BuildingIdxs {
+			s.Buildings[idx] = op.New.Buildings[i]
 		}
+
+	default:
+		panic("invalid scene operation type")
 	}
+	s.traceState("after", "sceneOp.do")
 }
 
-func (op *sceneOpDelete) do(s *Scene) {
-	s.Paths = SwapDeleteMany(s.Paths, op.pathIdxs)
-	s.Buildings = SwapDeleteMany(s.Buildings, op.buildingIdxs)
-}
-
-func (op *sceneOpDelete) redo(s *Scene) Action {
-	s.traceState("before", "delete.redo")
+// redo performs the operation and returns the new selection, if any
+func (op sceneOp) redo(s *Scene) ObjectSelection {
+	s.traceState("before", "sceneOp.redo")
 	op.traceState()
-	log.Debug("scene.operation.delete", "action", "redo", "pathIdxs", op.pathIdxs, "buildingIdxs", op.buildingIdxs)
-	op.do(s)
-	s.traceState("after", "delete.redo")
-	return app.doSwitchMode(ModeNormal, ResetAll())
-}
+	log.Info("scene.operation", "redo", string(op.Type))
 
-func (op *sceneOpDelete) undo(s *Scene) Action {
-	s.traceState("before", "delete.undo")
-	op.traceState()
-	log.Debug("scene.operation.delete", "action", "undo", "pathIdxs", op.pathIdxs, "buildingIdxs", op.buildingIdxs)
-	s.Paths = SwapInsertMany(s.Paths, op.pathIdxs, op.paths)
-	s.Buildings = SwapInsertMany(s.Buildings, op.buildingIdxs, op.buildings)
-	ss := sceneSubset{
-		buildingsIdxs: op.buildingIdxs,
-		pathsIdxs:     op.pathIdxs,
-	}
-	ss.updateBounds()
-	s.traceState("after", "delete.undo")
-	return selection.doInitSceneSubset(ss)
-}
+	var newSel ObjectSelection
 
-type sceneOpModify struct {
-	pathIdxs      []int
-	newPaths      []Path
-	oldPaths      []Path
-	buildingsIdxs []int
-	newBuildings  []Building
-	oldBuildings  []Building
-}
+	switch op.Type {
 
-func (op sceneOpModify) name() string { return "modify" }
+	case SceneOpAdd:
+		log.Debug("scene.operation.add", "action", "redo", "num_paths", len(op.New.Paths), "num_buildings", len(op.New.Buildings))
+		s.Paths = append(s.Paths, op.New.Paths...)
+		s.Buildings = append(s.Buildings, op.New.Buildings...)
 
-func (op sceneOpModify) traceState() {
-	if log.WillTrace() {
-		for i, idx := range op.pathIdxs {
-			log.Trace("scene.operation.modify.paths", "i", i, "sceneIdx", idx, "old", op.oldPaths[i], "new", op.newPaths[i])
+		newSel = ObjectSelection{
+			BuildingIdxs: Range(len(s.Buildings)-len(op.New.Buildings), len(s.Buildings)),
 		}
-		for i, idx := range op.buildingsIdxs {
-			log.Trace("scene.operation.modify.buildings", "i", i, "sceneIdx", idx, "old", op.oldBuildings[i], "new", op.newBuildings[i])
+		n := len(s.Paths)
+		for i := range n - len(op.New.Paths) {
+			newSel.PathIdxs = append(newSel.PathIdxs, PathSel{Idx: n + i, Start: true, End: true})
 		}
+		newSel.recomputeBounds(s.ObjectCollection)
+
+	case SceneOpDelete:
+		pathIdxs := op.Sel.FullPathIdxs()
+		log.Debug("scene.operation.delete", "action", "redo", "paths", pathIdxs, "buildinds", op.Sel.BuildingIdxs)
+		s.Paths = SwapDeleteMany(s.Paths, pathIdxs)
+		s.Buildings = SwapDeleteMany(s.Buildings, op.Sel.BuildingIdxs)
+
+	case SceneOpModify:
+		pathIdxs := op.Sel.AnyPathIdxs()
+		log.Debug("scene.operation.modify", "action", "redo", "paths", pathIdxs, "buildings", op.Sel.BuildingIdxs)
+		for i, idx := range pathIdxs {
+			s.Paths[idx] = op.New.Paths[i]
+		}
+		for i, idx := range op.Sel.BuildingIdxs {
+			s.Buildings[idx] = op.New.Buildings[i]
+		}
+		newSel = op.Sel
+
+	default:
+		panic("invalid scene operation type")
 	}
+	s.traceState("after", "sceneOp.redo")
+	return newSel
 }
 
-func (op *sceneOpModify) do(s *Scene) {
-	for i, idx := range op.pathIdxs {
-		s.Paths[idx] = op.newPaths[i]
-	}
-	for i, idx := range op.buildingsIdxs {
-		s.Buildings[idx] = op.newBuildings[i]
-	}
-}
-
-func (op *sceneOpModify) redo(s *Scene) Action {
-	s.traceState("before", "modify.redo")
+// undo performs the operation and returns the new selection, if any
+func (op sceneOp) undo(s *Scene) ObjectSelection {
+	s.traceState("before", "sceneOp.undo")
 	op.traceState()
-	log.Debug("scene.operation.modify", "action", "redo", "pathIdxs", op.pathIdxs, "buildingIdxs", op.buildingsIdxs)
-	op.do(s)
-	ss := sceneSubset{
-		buildingsIdxs: op.buildingsIdxs,
-		pathsIdxs:     op.pathIdxs,
-	}
-	ss.updateBounds()
-	s.traceState("after", "modify.redo")
-	return selection.doInitSceneSubset(ss)
-}
+	log.Info("scene.operation", "undo", string(op.Type))
 
-func (op *sceneOpModify) undo(s *Scene) Action {
-	s.traceState("before", "modify.undo")
-	op.traceState()
-	log.Debug("scene.operation.modify", "action", "undo", "pathIdxs", op.pathIdxs, "buildingIdxs", op.buildingsIdxs)
-	for i, idx := range op.pathIdxs {
-		s.Paths[idx] = op.oldPaths[i]
+	var newSel ObjectSelection
+
+	switch op.Type {
+	case SceneOpAdd:
+		log.Debug("scene.operation.add", "action", "undo", "num_paths", len(op.New.Paths), "num_buildings", len(op.New.Buildings))
+		s.Paths = s.Paths[:len(s.Paths)-len(op.Old.Paths)]
+		s.Buildings = s.Buildings[:len(s.Buildings)-len(op.Old.Buildings)]
+
+	case SceneOpDelete:
+		pathIdxs := op.Sel.FullPathIdxs()
+		log.Debug("scene.operation.delete", "action", "undo", "paths", pathIdxs, "buildinds", op.Sel.BuildingIdxs)
+		s.Paths = SwapInsertMany(s.Paths, pathIdxs, op.Old.Paths)
+		s.Buildings = SwapInsertMany(s.Buildings, op.Sel.BuildingIdxs, op.Old.Buildings)
+
+		newSel = op.Sel
+
+	case SceneOpModify:
+		pathIdxs := op.Sel.AnyPathIdxs()
+		log.Debug("scene.operation.modify", "action", "redo", "paths", pathIdxs, "buildings", op.Sel.BuildingIdxs)
+		for i, idx := range pathIdxs {
+			s.Paths[idx] = op.Old.Paths[i]
+		}
+		for i, idx := range op.Sel.BuildingIdxs {
+			s.Buildings[idx] = op.Old.Buildings[i]
+		}
+
+		newSel = ObjectSelection{
+			BuildingIdxs: Range(len(s.Buildings)-len(op.New.Buildings), len(s.Buildings)),
+		}
+		n := len(s.Paths)
+		for i := range n - len(op.New.Paths) {
+			newSel.PathIdxs = append(newSel.PathIdxs, PathSel{Idx: n + i, Start: true, End: true})
+		}
+		newSel.recomputeBounds(s.ObjectCollection)
+
+	default:
+		panic("invalid scene operation type")
 	}
-	for i, idx := range op.buildingsIdxs {
-		s.Buildings[idx] = op.oldBuildings[i]
-	}
-	ss := sceneSubset{
-		buildingsIdxs: op.buildingsIdxs,
-		pathsIdxs:     op.pathIdxs,
-	}
-	ss.updateBounds()
-	s.traceState("after", "modify.undo")
-	return selection.doInitSceneSubset(ss)
+	s.traceState("after", "sceneOp.undo")
+	return newSel
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Scene Modifiers methods
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func (s *Scene) addSceneOp(op sceneOp) {
-	s.traceState("before", op.name()+".do")
-	op.traceState()
-	log.Info("scene.operation", "op", op.name())
+// doSceneOp adds the given operation to the scene history and performs it
+func (s *Scene) doSceneOp(op sceneOp) {
 	s.history = s.history[:s.historyPos] // trim any undone operations
 	op.do(s)                             // actually perform the operation
 	s.history = append(s.history, op)    // append the operation to the history
 	s.historyPos++                       // increment history position
-	s.traceState("after", op.name()+".do")
 }
 
 // AddPath adds the given path to the scene.
 //
 // No validity check is performed.
 func (s *Scene) AddPath(path Path) {
-	s.addSceneOp(&sceneOpAdd{
-		paths:     []Path{path},
-		buildings: nil,
-	})
+	s.doSceneOp(sceneOp{Type: SceneOpAdd, New: ObjectCollection{Paths: []Path{path}}})
 }
 
 // AddBuilding adds the given building to the scene.
 //
 // No validity check is performed.
 func (s *Scene) AddBuilding(building Building) {
-	s.addSceneOp(&sceneOpAdd{
-		paths:     nil,
-		buildings: []Building{building},
-	})
+	s.doSceneOp(sceneOp{Type: SceneOpAdd, New: ObjectCollection{Buildings: []Building{building}}})
 }
 
 // AddObjects adds the given paths and buildings to the scene.
 //
 // No validity checks is performed.
-func (s *Scene) AddObjects(paths []Path, buildings []Building) {
-	s.addSceneOp(&sceneOpAdd{
-		paths:     slices.Clone(paths),
-		buildings: slices.Clone(buildings),
-	})
+func (s *Scene) AddObjects(col ObjectCollection) {
+	s.doSceneOp(sceneOp{Type: SceneOpAdd, New: col.clone()})
 }
 
 // DeleteObjects deletes the given paths and buildings from the scene.
-func (s *Scene) DeleteObjects(pathIdxs []int, buildingIdxs []int) {
-	s.addSceneOp(&sceneOpDelete{
-		pathIdxs:     slices.Clone(pathIdxs),
-		paths:        CopyIdxs(s.Paths, pathIdxs),
-		buildingIdxs: slices.Clip(buildingIdxs),
-		buildings:    CopyIdxs(s.Buildings, buildingIdxs),
-	})
-	if scene.Hovered.Type == TypeBuilding && SortedIntsIndex(buildingIdxs, scene.Hovered.Idx) >= 0 ||
-		scene.Hovered.Type == TypePath && SortedIntsIndex(pathIdxs, scene.Hovered.Idx) >= 0 {
-		// hovered object was deleted
-		scene.Hovered = scene.GetObjectAt(mouse.Pos)
+func (s *Scene) DeleteObjects(sel ObjectSelection) {
+	sel = sel.clone()
+	op := sceneOp{Type: SceneOpDelete, Sel: sel}
+	op.Old.Buildings = CopyIdxs(op.Old.Buildings, s.Buildings, sel.BuildingIdxs)
+	op.Old.Paths = CopyIdxs(op.Old.Paths, s.Paths, sel.FullPathIdxs())
+
+	s.doSceneOp(op)
+	if sel.Contains(scene.Hovered) {
+		// reset hovered object if it was deleted
+		scene.Hovered = Object{}
 	}
 }
 
 // ModifyObjects updates the given paths and buildings in the scene.
 //
 // No validity checks is performed.
-func (s *Scene) ModifyObjects(pathIdxs []int, newPaths []Path, buildingIdxs []int, newBuildings []Building) {
-	s.addSceneOp(&sceneOpModify{
-		pathIdxs:      slices.Clone(pathIdxs),
-		newPaths:      slices.Clone(newPaths),
-		oldPaths:      CopyIdxs(s.Paths, pathIdxs),
-		buildingsIdxs: slices.Clone(buildingIdxs),
-		newBuildings:  slices.Clone(newBuildings),
-		oldBuildings:  CopyIdxs(s.Buildings, buildingIdxs),
-	})
+func (s *Scene) ModifyObjects(sel ObjectSelection, new ObjectCollection) {
+	sel = sel.clone()
+	op := sceneOp{Type: SceneOpModify, Sel: sel, New: new.clone()}
+	op.Old.Buildings = CopyIdxs(op.Old.Buildings, s.Buildings, sel.BuildingIdxs)
+	op.Old.Paths = CopyIdxs(op.Old.Paths, s.Paths, sel.AnyPathIdxs())
+	s.doSceneOp(op)
 }
 
 // Undo tries to undo the last operation, and returns whether it has, and the action to be performed.
@@ -316,8 +285,8 @@ func (s *Scene) Undo() (bool, Action) {
 	if s.historyPos > 0 {
 		s.historyPos-- // decrement history position
 		op := s.history[s.historyPos]
-		log.Info("scene.operation", "undo", op.name())
-		return true, op.undo(s)
+		// will switch to [ModeSelection] or [ModeNormal] if new selection is empty
+		return true, selection.doInitSelection(op.undo(s))
 	}
 	log.Warn("cannot undo operation", "reason", "no more operations to undo")
 	return false, nil
@@ -327,9 +296,9 @@ func (s *Scene) Undo() (bool, Action) {
 func (s *Scene) Redo() (bool, Action) {
 	if s.historyPos < len(s.history) {
 		op := s.history[s.historyPos]
-		log.Info("scene.operation", "undo", op.name())
 		s.historyPos++ // increment history position
-		return true, op.redo(s)
+		// will switch to [ModeSelection] or [ModeNormal] if new selection is empty
+		return true, selection.doInitSelection(op.redo(s))
 	}
 	log.Warn("cannot redo operation", "reason", "no more operations to redo")
 	return false, nil
@@ -352,30 +321,55 @@ func (s *Scene) ResetModified() {
 // Scene other methods
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-func (s Scene) IsEmpty() bool {
-	return len(s.Buildings) == 0 && len(s.Paths) == 0
-}
-
-// Equals returns true if the 2 scenes buildings and paths are equal (element-wise)
-func (s Scene) Equals(other Scene) bool {
-	return slices.Equal(s.Buildings, other.Buildings) && slices.Equal(s.Paths, other.Paths)
-}
-
 // GetObjectAt returns the object at the given position (world coordinates)
 //
-// If multiple objects are at the same position, returns building over path,
-// and the first one in the list.
+// If multiple objects are at the position returns first one on this list:
+//   - selected path with highest index: start / end over body
+//   - selected building with highest index
+//   - normal path with highest index: start / end over body
+//   - normal building with highest index
+//
+// This is (mostly) the reverse of [Scene.Draw] order to make viewing/selecting masked objects easier.
 //
 // If no object is found, returns an zero-valued [Object]
 func (s Scene) GetObjectAt(pos rl.Vector2) Object {
-	for i, b := range s.Buildings {
-		if b.Bounds().CheckCollisionPoint(pos) {
-			return Object{Type: TypeBuilding, Idx: i}
+	for i := len(selection.PathIdxs) - 1; i >= 0; i-- {
+		elt := selection.PathIdxs[i]
+		p := s.Paths[elt.Idx]
+		if elt.Start && p.CheckStartCollisionPoint(pos) {
+			return Object{Type: TypePathStart, Idx: elt.Idx}
+		}
+		if elt.End && p.CheckEndCollisionPoint(pos) {
+			return Object{Type: TypePathEnd, Idx: elt.Idx}
+		}
+		if p.CheckCollisionPoint(pos) {
+			return Object{Type: TypePath, Idx: elt.Idx}
 		}
 	}
-	for i, p := range s.Paths {
+
+	for i := len(selection.BuildingIdxs) - 1; i >= 0; i-- {
+		if s.Buildings[selection.BuildingIdxs[i]].Bounds().CheckCollisionPoint(pos) {
+			return Object{Type: TypeBuilding, Idx: selection.BuildingIdxs[i]}
+		}
+	}
+
+	// TODO: do not check selected paths / buildings again ?
+	for i := len(s.Paths) - 1; i >= 0; i-- {
+		p := s.Paths[i]
+		if p.CheckStartCollisionPoint(pos) {
+			return Object{Type: TypePathStart, Idx: i}
+		}
+		if p.CheckEndCollisionPoint(pos) {
+			return Object{Type: TypePathEnd, Idx: i}
+		}
 		if p.CheckCollisionPoint(pos) {
 			return Object{Type: TypePath, Idx: i}
+		}
+	}
+
+	for i := len(s.Buildings) - 1; i >= 0; i-- {
+		if s.Buildings[i].Bounds().CheckCollisionPoint(pos) {
+			return Object{Type: TypeBuilding, Idx: i}
 		}
 	}
 	return Object{}
@@ -416,13 +410,16 @@ func (s Scene) IsPathValid(path Path) bool {
 // Draw scene objects
 func (s Scene) Draw() {
 	if app.Mode == ModeSelection {
-		stateIt := selection.GetStateIterator(TypePath)
+		pathStates := selection.PathDrawStateIterator()
 		for _, b := range s.Paths {
-			b.Draw(stateIt.Next())
+			start, end, body := pathStates.Next()
+			b.DrawStart(start)
+			b.DrawEnd(end)
+			b.DrawBody(body)
 		}
-		stateIt = selection.GetStateIterator(TypeBuilding)
+		buildingStates := selection.BuildingDrawStateIterator()
 		for _, b := range s.Buildings {
-			b.Draw(stateIt.Next())
+			b.Draw(buildingStates.Next())
 		}
 	} else {
 		for _, b := range s.Paths {
@@ -574,51 +571,4 @@ func (s *Scene) decodeText(scanner *bufio.Scanner, ver int) error {
 	}
 
 	return nil
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Object
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// Object represents a building or path in the scene
-type Object struct {
-	// Type of the object
-	Type ObjectType
-	// Index in either [Scene.Buildings] or [Scene.Paths]
-	Idx int
-}
-
-// IsEmpty returns true if [Object] is [TypeInvalid]
-func (o Object) IsEmpty() bool { return o.Type == TypeInvalid }
-
-// Draw draws the object in the given state
-//
-// Noop if [Object.Type] is [TypeInvalid]
-func (o Object) Draw(state DrawState) {
-	switch o.Type {
-	case TypeBuilding:
-		scene.Buildings[o.Idx].Draw(state)
-	case TypePath:
-		scene.Paths[o.Idx].Draw(state)
-	}
-}
-
-// ObjectType enumerates the different types of objects
-type ObjectType int
-
-const (
-	TypeInvalid ObjectType = iota
-	TypeBuilding
-	TypePath
-)
-
-func (ot ObjectType) String() string {
-	switch ot {
-	case TypeBuilding:
-		return "TypeBuilding"
-	case TypePath:
-		return "TypePath"
-	default:
-		return "TypeInvalid"
-	}
 }

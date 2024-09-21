@@ -5,11 +5,9 @@ package app
 import (
 	"fmt"
 	"slices"
-	"sort"
 
 	"github.com/bonoboris/satisfied/colors"
 	"github.com/bonoboris/satisfied/log"
-	"github.com/bonoboris/satisfied/math32"
 	"github.com/bonoboris/satisfied/matrix"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -21,7 +19,7 @@ var selection Selection
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type Selection struct {
-	sceneSubset
+	ObjectSelection
 	// Selection mode
 	mode SelectionMode
 	// transformed selection data (in drag or duplicate mode)
@@ -29,18 +27,22 @@ type Selection struct {
 }
 
 func (s Selection) traceState(key, val string) {
-	if key != "" && val != "" {
-		log.Trace("selection", key, val, "mode", s.mode)
+	if log.WillTrace() {
+		if key != "" && val != "" {
+			log.Trace("selection", key, val, "mode", s.mode)
+		}
+		log.Trace("selection", "buildingIdxs", s.BuildingIdxs)
+		log.Trace("selection", "pathIdxs", s.PathIdxs)
+		log.Trace("selection", "mode", s.mode, "bounds", s.Bounds)
+		s.transform.traceState()
 	}
-	s.sceneSubset.traceState()
-	s.transform.traceState()
-	log.Trace("selection", "mode", s.mode)
 }
 
 func (s *Selection) Reset() {
 	log.Debug("selection.reset")
-	s.buildingsIdxs = s.buildingsIdxs[:0]
-	s.pathsIdxs = s.pathsIdxs[:0]
+	s.BuildingIdxs = s.BuildingIdxs[:0]
+	s.PathIdxs = s.PathIdxs[:0]
+	s.Bounds = rl.NewRectangle(0, 0, 0, 0)
 	s.mode = SelectionNormal
 	s.transform.reset()
 }
@@ -75,66 +77,6 @@ func (m SelectionMode) String() string {
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// SceneSubset
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// represents a subset of scene objects
-type sceneSubset struct {
-	// Indices of path in subset
-	pathsIdxs []int
-	// Indices of building in subset
-	buildingsIdxs []int
-	// bounds of the subset (the smallest rectangle that contains all the objects)
-	bounds rl.Rectangle
-}
-
-func (s sceneSubset) traceState() {
-	log.Trace("selection.sceneSubset", "pathsIdxs", s.pathsIdxs, "buildingsIdxs", s.buildingsIdxs, "bounds", s.bounds)
-}
-
-// Returns whether scene building at idx is selected
-func (s *sceneSubset) ContainsBuilding(idx int) bool {
-	return SortedIntsIndex(s.buildingsIdxs, idx) >= 0
-}
-
-// Returns whether scene path at idx is selected
-func (s *sceneSubset) ContainsPath(idx int) bool { return SortedIntsIndex(s.pathsIdxs, idx) >= 0 }
-
-// Contains returns true if the given object is in the selection (false for TypeInvalid Object)
-func (s *sceneSubset) Contains(obj Object) bool {
-	switch obj.Type {
-	case TypeBuilding:
-		return s.ContainsBuilding(obj.Idx)
-	case TypePath:
-		return s.ContainsPath(obj.Idx)
-	default:
-		return false
-	}
-}
-func (s *sceneSubset) IsEmpty() bool { return len(s.buildingsIdxs) == 0 && len(s.pathsIdxs) == 0 }
-
-// updateBounds recomputes the outer bounds of the subset
-func (s *sceneSubset) updateBounds() {
-	if s.IsEmpty() {
-		s.bounds = rl.NewRectangle(0, 0, 0, 0)
-	}
-	xmin, ymin := math32.MaxFloat32, math32.MaxFloat32
-	xmax, ymax := -math32.MaxFloat32, -math32.MaxFloat32
-	for _, idx := range s.buildingsIdxs {
-		b := scene.Buildings[idx]
-		bounds := b.Bounds()
-		xmin, xmax = min(xmin, bounds.X), max(xmax, bounds.X+bounds.Width)
-		ymin, ymax = min(ymin, bounds.Y), max(ymax, bounds.Y+bounds.Height)
-	}
-	for _, idx := range s.pathsIdxs {
-		p := scene.Paths[idx]
-		xmin, xmax = min(xmin, min(p.Start.X, p.End.X)), max(xmax, max(p.Start.X, p.End.X))
-		ymin, ymax = min(ymin, min(p.Start.Y, p.End.Y)), max(ymax, max(p.Start.Y, p.End.Y))
-	}
-	s.bounds = rl.NewRectangle(xmin, ymin, xmax-xmin, ymax-ymin)
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
 // selection transform
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -150,11 +92,7 @@ type selectionTransform struct {
 	endPos rl.Vector2
 
 	// Transformation results / data
-
-	// transformed [Path]
-	paths []Path
-	// transformed [Building]
-	buildings []Building
+	ObjectCollection
 	// invalid transformed paths mask
 	invalidPaths []bool
 	// invalid transformed buildings mask
@@ -163,32 +101,35 @@ type selectionTransform struct {
 	isValid bool
 	// bounds of the transformed selection
 	bounds rl.Rectangle
+
+	// transformed building bounds buffer (reduce allocs)
+	_buildingBounds []rl.Rectangle
 }
 
-func (s selectionTransform) traceState() {
+func (st selectionTransform) traceState() {
 	if log.WillTrace() {
-		for i, p := range s.paths {
-			log.Trace("selectionTransform.paths", "i", i, "value", p, "invalid", s.invalidPaths[i])
+		for i, p := range st.Paths {
+			log.Trace("selectionTransform.paths", "i", i, "value", p, "invalid", st.invalidPaths[i])
 		}
-		for i, b := range s.buildings {
-			log.Trace("selectionTransform.buildings", "i", i, "value", b, "invalid", s.invalidBuildings[i])
+		for i, b := range st.Buildings {
+			log.Trace("selectionTransform.buildings", "i", i, "value", b, "invalid", st.invalidBuildings[i])
 		}
-		log.Trace("selectionTransform", "isValid", s.isValid, "bounds", s.bounds)
-		log.Trace("selectionTransform", "rot", s.rot, "startPos", s.startPos, "endPos", s.endPos)
+		log.Trace("selectionTransform", "isValid", st.isValid, "bounds", st.bounds)
+		log.Trace("selectionTransform", "rot", st.rot, "startPos", st.startPos, "endPos", st.endPos)
 	}
 }
 
-func (s *selectionTransform) reset() {
-	s.rot = 0
-	s.startPos = rl.Vector2{}
-	s.endPos = rl.Vector2{}
+func (st *selectionTransform) reset() {
+	st.rot = 0
+	st.startPos = rl.Vector2{}
+	st.endPos = rl.Vector2{}
 
-	s.paths = s.paths[:0]
-	s.buildings = s.buildings[:0]
-	s.invalidPaths = s.invalidPaths[:0]
-	s.invalidBuildings = s.invalidBuildings[:0]
-	s.isValid = false
-	s.bounds = rl.Rectangle{}
+	st.Paths = st.Paths[:0]
+	st.Buildings = st.Buildings[:0]
+	st.invalidPaths = st.invalidPaths[:0]
+	st.invalidBuildings = st.invalidBuildings[:0]
+	st.isValid = false
+	st.bounds = rl.Rectangle{}
 }
 
 func (s selectionTransform) isIdentity() bool {
@@ -204,78 +145,119 @@ func (s selectionTransform) transformMatrix(baseBounds rl.Rectangle) matrix.Matr
 }
 
 // recompute recomputes the transformed objects and whether they are valid
-func (s *selectionTransform) recompute(ss sceneSubset, mode SelectionMode) {
-	s.isValid = true
-	// resize slices
-	s.buildings = slices.Grow(s.buildings[:0], len(ss.buildingsIdxs))
-	s.invalidBuildings = slices.Grow(s.invalidBuildings[:0], len(ss.buildingsIdxs))
-	s.paths = slices.Grow(s.paths[:0], len(ss.pathsIdxs))
-	s.invalidPaths = slices.Grow(s.invalidPaths[:0], len(ss.pathsIdxs))
-
-	translate := grid.Snap(s.endPos.Subtract(s.startPos))
+func (st *selectionTransform) recompute(sel ObjectSelection, mode SelectionMode) {
 	// fast path for identity transform
-	if translate.X == 0 && translate.Y == 0 && s.rot%360 == 0 {
-		// invalid when duplicating, valid otherwise
-		invalid := mode == SelectionDuplicate
-		for _, idx := range ss.buildingsIdxs {
-			s.buildings = append(s.buildings, scene.Buildings[idx])
-			s.invalidBuildings = append(s.invalidBuildings, invalid)
+	// TODO: not copying anything would be faster
+	if st.isIdentity() {
+		switch mode {
+		case SelectionDuplicate:
+			pathIdxs := sel.FullPathIdxs()
+			st.Buildings = CopyIdxs(st.Buildings, scene.Buildings, sel.BuildingIdxs)
+			st.invalidBuildings = Repeat(st.invalidBuildings, true, len(sel.BuildingIdxs))
+			st.Paths = CopyIdxs(st.Paths, scene.Paths, pathIdxs)
+			st.invalidPaths = Repeat(st.invalidPaths, true, len(pathIdxs))
+			st.isValid = false
+			st.bounds = sel.Bounds
+		case SelectionDrag, SelectionNormal:
+			pathIdxs := sel.AnyPathIdxs()
+			st.Buildings = CopyIdxs(st.Buildings, scene.Buildings, sel.BuildingIdxs)
+			st.invalidBuildings = Repeat(st.invalidBuildings, false, len(sel.BuildingIdxs))
+			st.Paths = CopyIdxs(st.Paths, scene.Paths, pathIdxs)
+			st.invalidPaths = Repeat(st.invalidPaths, false, len(pathIdxs))
+			st.isValid = true
+			st.bounds = sel.Bounds
 		}
-		for _, idx := range ss.pathsIdxs {
-			s.paths = append(s.paths, scene.Paths[idx])
-			s.invalidPaths = append(s.invalidPaths, invalid)
-		}
-		s.isValid = !invalid
-		s.bounds = ss.bounds
 		return
 	}
 
-	mat := s.transformMatrix(ss.bounds)
-	s.bounds = mat.ApplyRecRec(ss.bounds)
+	// TODO: store transformMatrix and recompute only when needed
+
+	st.isValid = true
+
+	var pathIdxs []int
+	if mode == SelectionDuplicate {
+		// we only want to duplicate paths that are entirely inside the selection
+		pathIdxs = sel.FullPathIdxs()
+	} else {
+		pathIdxs = sel.AnyPathIdxs()
+	}
+
+	nb := len(sel.BuildingIdxs)
+	np := len(pathIdxs)
+
+	// clears slices
+	st.Buildings = slices.Grow(st.Buildings[:0], nb)
+	st.invalidBuildings = slices.Grow(st.invalidBuildings[:0], nb)
+	st.Paths = slices.Grow(st.Paths[:0], np)
+	st.invalidPaths = slices.Grow(st.invalidPaths[:0], np)
+	st._buildingBounds = slices.Grow(st._buildingBounds[:0], nb)
+
+	mat := st.transformMatrix(sel.Bounds)
+	st.bounds = mat.ApplyRecRec(sel.Bounds)
 
 	// Buildings
-	for _, idx := range ss.buildingsIdxs {
+	for _, idx := range sel.BuildingIdxs {
 		b := scene.Buildings[idx]
-		s.buildings = append(s.buildings, Building{
-			DefIdx: b.DefIdx,
-			Pos:    mat.ApplyV(b.Pos),
-			Rot:    (b.Rot + s.rot) % 360,
-		})
+		b.Pos = mat.ApplyV(b.Pos)
+		b.Rot = (b.Rot + st.rot) % 360
+		st.Buildings = append(st.Buildings, b)
 	}
 
-	// Paths
-	for _, idx := range ss.pathsIdxs {
-		p := scene.Paths[idx]
-		np := Path{
-			DefIdx: p.DefIdx,
-			Start:  mat.ApplyV(p.Start),
-			End:    mat.ApplyV(p.End),
+	// Paths & invalidPaths
+	switch mode {
+	case SelectionDuplicate:
+		for _, idx := range pathIdxs {
+			p := scene.Paths[idx]
+			p.Start = mat.ApplyV(p.Start)
+			p.End = mat.ApplyV(p.End)
+			st.Paths = append(st.Paths, p)
+			if p.IsValid() {
+				st.invalidPaths = append(st.invalidPaths, false)
+			} else {
+				st.invalidPaths = append(st.invalidPaths, true)
+				st.isValid = false
+			}
 		}
-		s.paths = append(s.paths, np)
-		s.invalidPaths = append(s.invalidPaths, false) // TODO proper check when path anchor done
+	case SelectionDrag, SelectionNormal:
+		for _, elt := range sel.PathIdxs {
+			p := scene.Paths[elt.Idx]
+			if elt.Start {
+				p.Start = mat.ApplyV(p.Start)
+			}
+			if elt.End {
+				p.End = mat.ApplyV(p.End)
+			}
+			st.Paths = append(st.Paths, p)
+			if p.IsValid() {
+				st.invalidPaths = append(st.invalidPaths, false)
+			} else {
+				st.invalidPaths = append(st.invalidPaths, true)
+				st.isValid = false
+			}
+		}
 	}
 
-	// precompute selection building bounds and initialize invalid to false
-	selectionBounds := make([]rl.Rectangle, len(ss.buildingsIdxs))
-	for i := range len(ss.buildingsIdxs) {
-		s.invalidBuildings = append(s.invalidBuildings, false)
-		selectionBounds[i] = s.buildings[i].Bounds()
+	// precompute transformed building bounds & initialize invalid to false
+	for i := range nb {
+		st._buildingBounds = append(st._buildingBounds, st.Buildings[i].Bounds())
+		st.invalidBuildings = append(st.invalidBuildings, false)
 	}
 
-	for i, sb := range scene.Buildings {
-		// TODO: Use iterator instead of [sceneSubset.ContainsBuilding]
+	isSelectedIt := NewMaskIterator(sel.BuildingIdxs)
+	for _, sb := range scene.Buildings {
 		sb := sb.Bounds()
-		if mode != SelectionDuplicate && ss.ContainsBuilding(i) || !s.bounds.CheckCollisionRec(sb) {
+		if mode != SelectionDuplicate && isSelectedIt.Next() || !st.bounds.CheckCollisionRec(sb) {
 			// skip:
 			//   - scene building in selection (except when duplicating)
 			//   - scene building outside transformation outer bounds
 			continue
 		} else {
 			// check against every transformed building
-			for i, bounds := range selectionBounds {
-				if !s.invalidBuildings[i] && bounds.CheckCollisionRec(sb) { // no need to call CheckCollisionRec if s.invalidBuildings[i] is already true
-					s.isValid = false
-					s.invalidBuildings[i] = true
+			for i, bounds := range st._buildingBounds {
+				// no need to call CheckCollisionRec if st.invalidBuildings[i] is already true
+				if !st.invalidBuildings[i] && bounds.CheckCollisionRec(sb) {
+					st.isValid = false
+					st.invalidBuildings[i] = true
 				}
 			}
 		}
@@ -298,7 +280,7 @@ func (s *Selection) GetAction() Action {
 			return app.doSwitchMode(ModeNormal, ResetAll())
 		case rl.KeyD:
 			// Duplicate use center of current selection as start position
-			return s.doBeginTransformation(SelectionDuplicate, s.bounds.Center())
+			return s.doBeginTransformation(SelectionDuplicate, s.Bounds.Center())
 		case rl.KeyDelete, rl.KeyX:
 			return s.doDelete()
 		case rl.KeyR:
@@ -357,14 +339,21 @@ func (s *Selection) GetAction() Action {
 func (s *Selection) doInitSingle(obj Object, mode SelectionMode, dragPos rl.Vector2) Action {
 	log.Debug("selection.doInitSingle", "obj", obj, "mode", mode, "dragPos", dragPos)
 	s.Reset()
+
 	switch obj.Type {
 	case TypeBuilding:
-		s.buildingsIdxs = append(s.buildingsIdxs, obj.Idx)
-		s.bounds = scene.Buildings[obj.Idx].Bounds()
+		s.BuildingIdxs = append(s.BuildingIdxs, obj.Idx)
+		s.Bounds = scene.Buildings[obj.Idx].Bounds()
 	case TypePath:
-		s.pathsIdxs = append(s.pathsIdxs, obj.Idx)
-		path := scene.Paths[obj.Idx]
-		s.bounds = rl.NewRectangleCorners(path.Start, path.End)
+		s.PathIdxs = append(s.PathIdxs, PathSel{Idx: obj.Idx, Start: true, End: true})
+		s.Bounds = rl.NewRectangleCorners(scene.Paths[obj.Idx].Start, scene.Paths[obj.Idx].End)
+	case TypePathStart:
+		s.PathIdxs = append(s.PathIdxs, PathSel{Idx: obj.Idx, Start: true})
+		s.Bounds = rl.NewRectangleV(scene.Paths[obj.Idx].Start, rl.Vector2{})
+	case TypePathEnd:
+		s.PathIdxs = append(s.PathIdxs, PathSel{Idx: obj.Idx, End: true})
+		s.Bounds = rl.NewRectangleV(scene.Paths[obj.Idx].End, rl.Vector2{})
+
 	default:
 		panic("invalid object type")
 	}
@@ -373,64 +362,58 @@ func (s *Selection) doInitSingle(obj Object, mode SelectionMode, dragPos rl.Vect
 		s.transform.startPos = dragPos
 		s.transform.endPos = dragPos
 	} else {
-		s.transform.startPos = s.bounds.Center()
-		s.transform.endPos = s.bounds.Center()
+		center := s.Bounds.Center()
+		s.transform.startPos = center
+		s.transform.endPos = center
 	}
-	s.transform.recompute(s.sceneSubset, mode) // noop transformation ->uses fast path
+	s.transform.recompute(s.ObjectSelection, mode) // noop transformation ->uses fast path
+
 	s.traceState("after", "doBeginTransformation")
 	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
 }
 
-// doInitSceneSubset initializes a new selection from a subset of the scene, in [SelectionNormal] mode
-func (s *Selection) doInitSceneSubset(ss sceneSubset) Action {
-	log.Debug("selection.doInitSceneSubset", "pathsIdxs", ss.pathsIdxs, "buildingsIdxs", ss.buildingsIdxs, "bounds", ss.bounds)
+// doInitSelection initializes a new selection from an [ObjectSelection], in [SelectionNormal] mode
+func (s *Selection) doInitSelection(sel ObjectSelection) Action {
+	log.Debug("selection.doInitSelection", "selected", sel)
 	s.Reset()
-	if ss.IsEmpty() {
-		s.traceState("after", "doInitSceneSubset")
+
+	if sel.IsEmpty() {
+		s.traceState("after", "doInitSelection")
 		return app.doSwitchMode(ModeNormal, ResetAll())
 	}
-	s.buildingsIdxs = ss.buildingsIdxs
-	s.pathsIdxs = ss.pathsIdxs
-	s.bounds = ss.bounds
+
+	s.BuildingIdxs = append(s.BuildingIdxs, sel.BuildingIdxs...)
+	s.PathIdxs = append(s.PathIdxs, sel.PathIdxs...)
+	s.Bounds = sel.Bounds
 	s.mode = SelectionNormal
-	s.transform.startPos = s.bounds.Center()
-	s.transform.endPos = s.bounds.Center()
-	s.transform.recompute(s.sceneSubset, s.mode) // noop transformation ->uses fast path
-	s.traceState("after", "doInitSceneSubset")
+	s.transform.startPos = s.Bounds.Center()
+	s.transform.endPos = s.Bounds.Center()
+	s.transform.recompute(s.ObjectSelection, s.mode) // noop transformation ->uses fast path
+
+	s.traceState("after", "doInitSelection")
 	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
 }
 
 func (s *Selection) doInitRectangle(rect rl.Rectangle, mode SelectionMode, dragPos rl.Vector2) Action {
 	log.Debug("selection.doInitRectangle", "rect", rect, "mode", mode, "dragPos", dragPos)
 	s.Reset()
-	for i, b := range scene.Buildings {
-		bounds := b.Bounds()
-		if rect.CheckCollisionPoint(bounds.TopLeft()) && rect.CheckCollisionPoint(bounds.BottomRight()) {
-			s.buildingsIdxs = append(s.buildingsIdxs, i)
-		}
-	}
-	sort.Ints(s.buildingsIdxs)
-	for i, p := range scene.Paths {
-		if rect.CheckCollisionPoint(p.Start) && rect.CheckCollisionPoint(p.End) {
-			s.pathsIdxs = append(s.pathsIdxs, i)
-		}
-	}
+	scene.SelectFromRect(&s.ObjectSelection, rect)
+
 	if s.IsEmpty() {
 		s.traceState("after", "doInitRectangle")
 		return app.doSwitchMode(ModeNormal, ResetAll())
 	}
-
-	sort.Ints(s.pathsIdxs)
-	s.updateBounds()
 	s.mode = mode
 	if mode == SelectionDrag {
 		s.transform.startPos = dragPos
 		s.transform.endPos = dragPos
 	} else {
-		s.transform.startPos = s.bounds.Center()
-		s.transform.endPos = s.bounds.Center()
+		center := s.Bounds.Center()
+		s.transform.startPos = center
+		s.transform.endPos = center
 	}
-	s.transform.recompute(s.sceneSubset, mode) // noop transformation -> uses fast path
+	s.transform.recompute(s.ObjectSelection, mode) // noop transformation -> uses fast path
+
 	s.traceState("after", "doInitSingle")
 	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
 }
@@ -440,7 +423,9 @@ func (s *Selection) doDelete() Action {
 	log.Debug("selection.doDelete")
 	app.Mode.Assert(ModeSelection)
 	assert(s.mode == SelectionNormal, "cannot delete selection in "+s.mode.String())
-	scene.DeleteObjects(s.pathsIdxs, s.buildingsIdxs)
+
+	scene.DeleteObjects(s.ObjectSelection)
+
 	s.traceState("after", "doDelete")
 	return app.doSwitchMode(ModeNormal, ResetAll())
 }
@@ -449,11 +434,38 @@ func (s *Selection) doBeginTransformation(mode SelectionMode, pos rl.Vector2) Ac
 	s.traceState("before", "doBeginTransformation")
 	log.Debug("selection.doBeginTransformation", "mode", mode, "pos", pos)
 	app.Mode.Assert(ModeSelection)
+
+	// special cases for only path start/end selected for duplicate
+	if mode == SelectionDuplicate && len(s.BuildingIdxs) == 0 {
+		noFullPath := true
+		for _, elt := range s.PathIdxs {
+			if elt.Start && elt.End {
+				noFullPath = false
+				break
+			}
+		}
+		if noFullPath {
+			if len(s.PathIdxs) == 1 {
+				// only one path start/end selected switch to newpath mode
+				log.Debug("selection.doBeginTransformation", "action", "newpath", "mode", mode, "reason", "single path ending selected")
+				return newPath.doInit(s.PathIdxs[0].Idx)
+			} else {
+				// TODO: would be nice to have a multi newpath mode
+				// for now do nothing
+				log.Debug("selection.doBeginTransformation", "action", "skipped", "mode", mode, "reason", "only path endings selected")
+				s.traceState("after", "doBeginTransformation")
+				return nil
+			}
+		}
+	}
+
 	s.transform.reset()
+
 	s.mode = mode
 	s.transform.startPos = pos
 	s.transform.endPos = pos
-	s.transform.recompute(s.sceneSubset, mode) // noop transformation -> uses fast path
+	s.transform.recompute(s.ObjectSelection, mode) // noop transformation -> uses fast path
+
 	s.traceState("after", "doBeginTransformation")
 	return nil
 }
@@ -462,17 +474,18 @@ func (s *Selection) doMoveBy(delta rl.Vector2) Action {
 	s.traceState("before", "doMoveBy")
 	log.Debug("selection.doMoveBy", "delta", delta, "selection.mode", s.mode)
 	app.Mode.Assert(ModeSelection)
+
 	if s.mode == SelectionNormal {
-		s.transform.startPos = s.bounds.Center()
-		s.transform.endPos = s.bounds.Center().Add(delta)
+		center := s.Bounds.Center()
+		s.transform.startPos = center
+		s.transform.endPos = center.Add(delta)
 		s.transform.rot = 0
-		s.transform.recompute(s.sceneSubset, s.mode)
-		// will apply the translation if it's valid and reset transformation in any case
+		s.transform.recompute(s.ObjectSelection, s.mode)
 		s.traceState("after", "doMoveBy")
 		return s.doEndTransformation(false)
-	} else {
-		s.transform.endPos = s.transform.endPos.Add(delta)
 	}
+	s.transform.endPos = s.transform.endPos.Add(delta)
+
 	s.traceState("after", "doMoveBy")
 	return nil
 }
@@ -481,8 +494,10 @@ func (s *Selection) doMoveTo(pos rl.Vector2) Action {
 	s.traceState("before", "doMoveTo")
 	log.Trace("selection.doMoveTo", "pos", pos) // moving by mouse -> tracing
 	app.Mode.Assert(ModeSelection)
+
 	s.transform.endPos = pos
-	s.transform.recompute(s.sceneSubset, s.mode)
+	s.transform.recompute(s.ObjectSelection, s.mode)
+
 	s.traceState("after", "doMoveTo")
 	return nil
 }
@@ -491,19 +506,22 @@ func (s *Selection) doRotate() Action {
 	s.traceState("before", "doRotate")
 	log.Debug("selection.doRotate", "selection.mode", s.mode)
 	app.Mode.Assert(ModeSelection)
+
 	if s.mode == SelectionNormal {
 		// try rotate the selection
-		s.transform.startPos = s.bounds.Center()
-		s.transform.endPos = s.bounds.Center()
+		center := s.Bounds.Center()
+		s.transform.startPos = center
+		s.transform.endPos = center
 		s.transform.rot = 90
-		s.transform.recompute(s.sceneSubset, s.mode)
+		s.transform.recompute(s.ObjectSelection, s.mode)
 		// will apply the rotation if it's valid and reset transformation in any case
 		s.traceState("after", "doRotate")
 		return s.doEndTransformation(false)
 	}
 
 	s.transform.rot += 90
-	s.transform.recompute(s.sceneSubset, s.mode)
+	s.transform.recompute(s.ObjectSelection, s.mode)
+
 	s.traceState("after", "doRotate")
 	return nil
 }
@@ -512,26 +530,29 @@ func (s *Selection) doEndTransformation(discard bool) Action {
 	s.traceState("before", "doEndTransformation")
 	log.Debug("selection.doEndTransformation", "discard", discard, "selection.mode", s.mode)
 	app.Mode.Assert(ModeSelection)
+
 	switch s.mode {
+
 	case SelectionNormal, SelectionDrag:
 		if !discard && !s.transform.isIdentity() && s.transform.isValid {
-			scene.ModifyObjects(s.pathsIdxs, s.transform.paths, s.buildingsIdxs, s.transform.buildings)
-			s.bounds = s.transform.bounds
+			scene.ModifyObjects(s.ObjectSelection, s.transform.ObjectCollection)
+			s.Bounds = s.transform.bounds
 		}
 		// in any case, reset mode & transform
 		s.transform.reset()
 		s.mode = SelectionNormal
+
 	case SelectionDuplicate:
-		if !discard && !s.transform.isIdentity() && s.transform.isValid {
-			scene.AddObjects(s.transform.paths, s.transform.buildings)
-		}
 		if discard {
-			// only on discard -> reset mode & transform
+			// on discard -> reset mode & transform
 			s.transform.reset()
 			s.mode = SelectionNormal
+		} else if !s.transform.isIdentity() && s.transform.isValid {
+			// stays in [SelectionDuplicate] mode
+			scene.AddObjects(s.transform.ObjectCollection)
 		}
-
 	}
+
 	s.traceState("after", "doEndTransformation")
 	return nil
 }
@@ -565,6 +586,7 @@ func (s *Selection) Dispatch(action Action) Action {
 // Draw
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// draws the transformed selection
 func (s *selectionTransform) draw(state DrawState) {
 	bounds := s.bounds
 	px := 1 / camera.Zoom()
@@ -572,16 +594,16 @@ func (s *selectionTransform) draw(state DrawState) {
 		rl.DrawRectangleLinesEx(bounds, 3*px, colors.WithAlpha(colors.Blue500, 0.5))
 	} else {
 		rl.DrawRectangleLinesEx(bounds, 3*px, colors.WithAlpha(colors.Red500, 0.5))
-		rl.DrawRectangleRec(bounds, colors.WithAlpha(colors.Red500, 0.1))
+		rl.DrawRectangleRec(bounds, colors.WithAlpha(colors.Red500, 0.15))
 	}
-	for i, p := range s.paths {
+	for i, p := range s.Paths {
 		if s.invalidPaths[i] {
 			p.Draw(DrawInvalid)
 		} else {
 			p.Draw(state)
 		}
 	}
-	for i, b := range s.buildings {
+	for i, b := range s.Buildings {
 		if s.invalidBuildings[i] {
 			b.Draw(DrawInvalid)
 		} else {
@@ -590,13 +612,13 @@ func (s *selectionTransform) draw(state DrawState) {
 	}
 }
 
-// Draws the selection (if transformation if any)
+// Draws the selection (and the transformed selection if any)
 func (s Selection) Draw() {
 	switch s.mode {
 	case SelectionNormal:
 		// only draw the selection rectangle, buildings and paths are drawn in [Scene.Draw]
 		px := 1 / camera.Zoom()
-		rl.DrawRectangleLinesEx(s.bounds, 3*px, colors.WithAlpha(colors.Blue500, 0.5))
+		rl.DrawRectangleLinesEx(s.Bounds, 3*px, colors.WithAlpha(colors.Blue500, 0.5))
 	case SelectionDrag:
 		s.transform.draw(DrawClicked)
 	case SelectionDuplicate:
@@ -607,6 +629,118 @@ func (s Selection) Draw() {
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // Iterators
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// BuildingDrawStateIterator returns an iterator over the draw state of scene buildings
+func (s Selection) BuildingDrawStateIterator() buildingDrawStateIterator {
+	var state DrawState
+	switch s.mode {
+	case SelectionNormal:
+		state = DrawSelected
+	case SelectionDrag:
+		state = DrawShadow
+	case SelectionDuplicate:
+		state = DrawClicked
+	default:
+		panic("invalid selection mode")
+	}
+	return buildingDrawStateIterator{
+		selectedIt: NewMaskIterator(s.BuildingIdxs),
+		state:      state,
+	}
+}
+
+// PathDrawStateIterator returns an iterator over the draw state of scene paths start, end and body
+func (s Selection) PathDrawStateIterator() pathDrawStateIterator {
+	var state DrawState
+	switch s.mode {
+	case SelectionNormal:
+		state = DrawSelected
+	case SelectionDrag:
+		state = DrawShadow
+	case SelectionDuplicate:
+		state = DrawClicked
+	default:
+		panic("invalid selection mode")
+	}
+	return pathDrawStateIterator{
+		pathsIdxs: s.PathIdxs,
+		state:     state,
+		mode:      s.mode,
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// pathDrawStateIterator
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type pathDrawStateIterator struct {
+	// selected paths
+	pathsIdxs []PathSel
+	// selection mode
+	mode SelectionMode
+	// state to return for selected path start/end/body
+	state DrawState
+	// Current scene path index to consider
+	idx int
+	// current index in pathsIdxs
+	i int
+}
+
+// Next returns the triplet of (start, end, body) draw state
+func (it *pathDrawStateIterator) Next() (DrawState, DrawState, DrawState) {
+	if it.i == len(it.pathsIdxs) {
+		// no more selection
+		it.idx++
+		return DrawNormal, DrawNormal, DrawNormal
+	}
+	if elt := it.pathsIdxs[it.i]; elt.Idx == it.idx {
+		// current path is in selection
+		it.i++ // advance to in selected paths
+		it.idx++
+		switch {
+		case it.mode == SelectionDrag || elt.Start && elt.End:
+			// when dragging we want to fully gray out the scene path
+			// regardless of wheter only start/end is selected
+			return it.state, it.state, it.state
+		case elt.Start:
+			return it.state, DrawNormal, DrawNormal
+		case elt.End:
+			return DrawNormal, it.state, DrawNormal
+		default:
+			panic("selection.pathIdx contains an empty path (neiher start nor end)")
+		}
+	} else {
+		// not selected, return normal state
+		it.idx++
+		return DrawNormal, DrawNormal, DrawNormal
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// buildingDrawStateIterator
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// buildingDrawStateIterator is a helper to get the next scene building draw state.
+type buildingDrawStateIterator struct {
+	selectedIt MaskIterator
+	// state to return for selected buildings/paths
+	state DrawState
+}
+
+func (it *buildingDrawStateIterator) Next() DrawState {
+	if it.selectedIt.Next() {
+		// it.selected.i is the index of the next selected building/path in selection
+		// we want the current
+		return it.state
+	} else {
+		// not selected, return normal state
+		return DrawNormal
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// MaskIterator
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // Iterate over a would-be mask from the true values indices.
@@ -644,61 +778,4 @@ func (it *MaskIterator) Next() bool {
 		it.Idx++
 		return false
 	}
-}
-
-// DrawStateIterator is a helper to get the next scene building/path draw state.
-//
-// It optimizes checking whether a scene object is in the selection assuming:
-//   - [Selection.buildingsIdxs] and [Selection.pathsIdxs] are sorted
-//   - Scene building/path are iterated in order
-//
-// This results in O(len(scene)) complexity.
-type drawStateIterator struct {
-	selected MaskIterator
-	// state to return for selected buildings/paths
-	state DrawState
-}
-
-func newDrawStateIterator(selectedIdxs []int, state DrawState) drawStateIterator {
-	return drawStateIterator{
-		selected: NewMaskIterator(selectedIdxs),
-		state:    state,
-	}
-}
-
-func (it *drawStateIterator) Next() DrawState {
-	if it.selected.Next() {
-		// it.selected.i is the index of the next selected building/path in selection
-		// we want the current
-		return it.state
-	} else {
-		// not selected, return normal state
-		return DrawNormal
-	}
-}
-
-// Returns a [drawStateIterator] for the given [ObjectType].
-func (s *Selection) GetStateIterator(objectType ObjectType) drawStateIterator {
-	var selectedIdxs []int
-	switch objectType {
-	case TypePath:
-		selectedIdxs = s.pathsIdxs
-	case TypeBuilding:
-		selectedIdxs = s.buildingsIdxs
-	default:
-		panic("selectionTransform.GetStateIterator: invalid objectType")
-	}
-
-	var state DrawState
-	switch s.mode {
-	case SelectionNormal:
-		state = DrawSelected
-	case SelectionDrag:
-		state = DrawShadow
-	case SelectionDuplicate:
-		state = DrawClicked
-	default:
-		panic("selectionTransform.GetStateIterator: invalid selection mode")
-	}
-	return newDrawStateIterator(selectedIdxs, state)
 }

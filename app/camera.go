@@ -45,10 +45,6 @@ func (c Camera) traceState(key, val string) {
 	}
 }
 
-func (c Camera) traceStateBefore() {
-	log.Trace("camera", "zoom", c.camera.Zoom, "target", c.camera.Target, "offset", c.camera.Offset, "zooming", c.Zooming, "zoomAt", c.ZoomAt)
-}
-
 // Zoom returns the current zoom level
 func (c *Camera) Zoom() float32 { return c.camera.Zoom }
 

@@ -66,7 +66,7 @@ This is more of a **learning & personal** project right now, so **use it at your
 - [x] Click and drag to move selection
 - [x] Delete selection
 - [x] Undo / redo (may be buggy, hard to reproduce)
-- [ ] Move paths by their ends
+- [x] Move paths by their ends
 - [x] Save and load projects
 - [ ] Complete buildings list for Production / Power / Logistics related buildings
 - [ ] Scroll bar in side panel

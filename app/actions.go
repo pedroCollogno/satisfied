@@ -192,8 +192,8 @@ type SelectionActionInitSingle struct {
 	DragPos rl.Vector2
 }
 
-// SelectionActionInitSceneSubset - initialize a new selection from a subset of the scene
-type SelectionActionInitSceneSubset struct{ Subset sceneSubset }
+// SelectionActionInitSelection - initialize a new selection from a subset of the scene
+type SelectionActionInitSelection struct{ Selection ObjectSelection }
 
 // SelectionActionInitRectangle - initialize a new selection from a rectangle
 type SelectionActionInitRectangle struct {
@@ -233,7 +233,7 @@ type SelectionActionEndTransformation struct {
 
 func (a SelectionActionInitRectangle) Target() ActionTarget       { return TargetSelection }
 func (a SelectionActionInitSingle) Target() ActionTarget          { return TargetSelection }
-func (a SelectionActionInitSceneSubset) Target() ActionTarget     { return TargetSelection }
+func (a SelectionActionInitSelection) Target() ActionTarget       { return TargetSelection }
 func (a SelectionActionDelete) Target() ActionTarget              { return TargetSelection }
 func (a SelectionActionBeginTransformation) Target() ActionTarget { return TargetSelection }
 func (a SelectionActionMoveTo) Target() ActionTarget              { return TargetSelection }
