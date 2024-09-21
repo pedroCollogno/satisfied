@@ -2,6 +2,8 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"strings"
@@ -11,76 +13,21 @@ import (
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
-type Color = rl.Color
-
-type inputOutput struct {
-	Pos rl.Vector2
-	Rot int32
-}
-
-func (io inputOutput) matrix() matrix.Matrix {
-	return matrix.NewTranslateV(io.Pos).Rotate(io.Rot)
-}
-
-func (inputOutput) drawTri(mat matrix.Matrix, x, y float32, c rl.Color) {
-	rl.DrawTriangle(
-		mat.Apply(x-0.25, y+0.25),
-		mat.Apply(x+0.25, y+0.25),
-		mat.Apply(x, y-0.25),
-		c,
-	)
-}
-
-func (io inputOutput) drawBeltInput(mat matrix.Matrix, state DrawState) {
-	mat = mat.Mult(io.matrix())
-	bounds := rl.NewRectangle(-1, -0.5, 2, 0.5)
-	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Orange500))
-	c := state.transformColor(colors.Black)
-	io.drawTri(mat, -0.5, -0.25, c)
-	io.drawTri(mat, 0, -0.25, c)
-	io.drawTri(mat, 0.5, -0.25, c)
-}
-
-func (io inputOutput) drawBeltOutput(mat matrix.Matrix, state DrawState) {
-	mat = mat.Mult(io.matrix())
-	bounds := rl.NewRectangle(-1, 0, 2, 0.5)
-	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Green500))
-	c := state.transformColor(colors.Black)
-	io.drawTri(mat, -0.5, 0.25, c)
-	io.drawTri(mat, 0, 0.25, c)
-	io.drawTri(mat, 0.5, 0.25, c)
-}
-
-func (io inputOutput) drawPipeInput(mat matrix.Matrix, state DrawState) {
-	mat = mat.Mult(io.matrix())
-	bounds := rl.NewRectangle(-0.5, -1, 1, 0.5)
-	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Orange500))
-	c := state.transformColor(colors.Black)
-	io.drawTri(mat, 0, -0.25, c)
-}
-
-func (io inputOutput) drawPipeOutput(mat matrix.Matrix, state DrawState) {
-	mat = mat.Mult(io.matrix())
-	bounds := rl.NewRectangle(-0.5, 0, 1, 0.5)
-	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Green500))
-	c := state.transformColor(colors.Black)
-	io.drawTri(mat, 0, 0.25, c)
-}
-
-type BuildingDef struct {
-	Class    string
-	Category string
-	Dims     rl.Vector2
-	BeltIn   []inputOutput
-	BeltOut  []inputOutput
-	PipeIn   []inputOutput
-	PipeOut  []inputOutput
-}
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Building
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type Building struct {
 	DefIdx int
 	Pos    rl.Vector2
 	Rot    int32
+}
+
+func (b Building) String() string {
+	if b.DefIdx == -1 {
+		return fmt.Sprintf("%s{%v %v %d}", "<invalid>", b.Pos.X, b.Pos.Y, b.Rot)
+	}
+	return fmt.Sprintf("%s{%v %v %d}", b.Def().Class, b.Pos.X, b.Pos.Y, b.Rot)
 }
 
 func (b Building) Def() BuildingDef { return buildingDefs[b.DefIdx] }
@@ -95,20 +42,6 @@ func (b Building) Bounds() rl.Rectangle {
 	return b.matrix().ApplyRec(0, 0, dims.X, dims.Y)
 }
 
-// func (b Building) DrawLabel(bounds rl.Rectangle) {
-// 	zoom := camera.Zoom()
-// 	fontSize := float32(24) / zoom
-// 	spacing := float32(1) / zoom
-// 	lines := strings.Split(b.Def().Class, " ")
-// 	center := bounds.Center()
-// 	iOff := float32(len(lines)-1)/2 + 0.5
-// 	for i, line := range lines {
-// 		width := rl.MeasureTextEx(font, line, fontSize, spacing).X
-// 		pos := center.Sub(width/2, (iOff-float32(i))*fontSize)
-// 		rl.DrawTextEx(font, line, pos, fontSize, spacing, rl.Color{0, 0, 0, 127})
-
-//		}
-//	}
 const (
 	labelFontSize    = 24.
 	labelLineSpacing = -5.
@@ -131,6 +64,8 @@ func (b Building) DrawLabel(bounds rl.Rectangle) {
 	dy := (labelFontSize + labelLineSpacing) / zoom
 	yOff := max(0, (bounds.Height-n*dy)/2)
 
+	// FIXME: ScissorMode is expensive, avoid through computing how many characters we can draw
+	// or maybe a shader?
 	rl.BeginScissorMode(int32(screenPos.X), int32(screenPos.Y), int32(screenSize.X), int32(screenSize.Y))
 	for i, line := range lines {
 		width := rl.MeasureTextEx(labelFont, line, fontSize, 0).X
@@ -145,6 +80,13 @@ func (b Building) Draw(state DrawState) {
 	mat := b.matrix()
 	def := b.Def()
 	bounds := mat.ApplyRec(0, 0, def.Dims.X, def.Dims.Y)
+
+	if !dims.World.CheckCollisionRec(bounds) {
+		// skip drawing if building is outside of the scene
+		return
+	}
+
+	app.drawCounts.Buildings++
 	rl.DrawRectangleRec(bounds, state.transformColor(colors.Blue500))
 
 	if state == DrawShadow {
@@ -153,28 +95,141 @@ func (b Building) Draw(state DrawState) {
 
 	rl.DrawRectangleLinesEx(bounds, 0.5, state.transformColor(colors.Blue700))
 
-	for _, input := range def.BeltIn {
-		input.drawBeltInput(mat, state)
+	for i := 0; i < def.BeltIn.len; i++ {
+		def.BeltIn.arr[i].drawBeltIn(mat, state)
 	}
-	for _, output := range def.BeltOut {
-		output.drawBeltOutput(mat, state)
+	for i := 0; i < def.BeltOut.len; i++ {
+		def.BeltOut.arr[i].drawBeltOut(mat, state)
 	}
-	for _, input := range def.PipeIn {
-		input.drawPipeInput(mat, state)
+	for i := 0; i < def.PipeIn.len; i++ {
+		def.PipeIn.arr[i].drawPipeIn(mat, state)
 	}
-	for _, output := range def.PipeOut {
-		output.drawPipeOutput(mat, state)
+	for i := 0; i < def.PipeOut.len; i++ {
+		def.PipeOut.arr[i].drawPipeOut(mat, state)
 	}
 	b.DrawLabel(bounds)
 }
 
-func ParseBuildingDefs(data []byte) BuildingDefs {
-	var defs BuildingDefs
-	err := json.Unmarshal(data, &defs)
-	if err != nil {
-		panic(err)
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// (Belt, Pipe)  input / output drawing
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type inputOutput struct {
+	Pos rl.Vector2
+	Rot int32
+}
+
+func (io inputOutput) String() string {
+	if io.Rot == 0 {
+		return fmt.Sprintf("(%v,%v)", io.Pos.X, io.Pos.Y)
+	} else {
+		return fmt.Sprintf("(%v,%v, r=%d°)", io.Pos.X, io.Pos.Y, io.Rot)
 	}
-	return defs
+}
+
+func (io inputOutput) matrix() matrix.Matrix {
+	return matrix.NewTranslateV(io.Pos).Rotate(io.Rot)
+}
+
+func (inputOutput) drawTri(mat matrix.Matrix, x, y float32, c rl.Color) {
+	rl.DrawTriangle(
+		mat.Apply(x-0.25, y+0.25),
+		mat.Apply(x+0.25, y+0.25),
+		mat.Apply(x, y-0.25),
+		c,
+	)
+}
+
+func (io inputOutput) drawBeltIn(mat matrix.Matrix, state DrawState) {
+	mat = mat.Mult(io.matrix())
+	bounds := rl.NewRectangle(-1, -0.5, 2, 0.5)
+	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Orange500))
+	c := state.transformColor(colors.Black)
+	io.drawTri(mat, -0.5, -0.25, c)
+	io.drawTri(mat, 0, -0.25, c)
+	io.drawTri(mat, 0.5, -0.25, c)
+}
+
+func (io inputOutput) drawBeltOut(mat matrix.Matrix, state DrawState) {
+	mat = mat.Mult(io.matrix())
+	bounds := rl.NewRectangle(-1, 0, 2, 0.5)
+	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Green500))
+	c := state.transformColor(colors.Black)
+	io.drawTri(mat, -0.5, 0.25, c)
+	io.drawTri(mat, 0, 0.25, c)
+	io.drawTri(mat, 0.5, 0.25, c)
+}
+
+func (io inputOutput) drawPipeIn(mat matrix.Matrix, state DrawState) {
+	mat = mat.Mult(io.matrix())
+	bounds := rl.NewRectangle(-0.5, -1, 1, 0.5)
+	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Orange500))
+	c := state.transformColor(colors.Black)
+	io.drawTri(mat, 0, -0.25, c)
+}
+
+func (io inputOutput) drawPipeOut(mat matrix.Matrix, state DrawState) {
+	mat = mat.Mult(io.matrix())
+	bounds := rl.NewRectangle(-0.5, 0, 1, 0.5)
+	rl.DrawRectangleRec(mat.ApplyRecRec(bounds), state.transformColor(colors.Green500))
+	c := state.transformColor(colors.Black)
+	io.drawTri(mat, 0, 0.25, c)
+}
+
+const MAX_INOUT = 4
+
+type inputOutputs struct {
+	arr [MAX_INOUT]inputOutput
+	len int
+}
+
+func (inouts *inputOutputs) UnmarshalJSON(data []byte) error {
+	var s []inputOutput
+	err := json.Unmarshal(data, &s)
+	if err != nil {
+		return err
+	}
+	if len(s) > MAX_INOUT {
+		return errors.New("elements count exceeds MAX_INOUT")
+	}
+	copy(inouts.arr[:], s)
+	inouts.len = len(s)
+	return err
+}
+
+func (inouts inputOutputs) String() string {
+	return fmt.Sprintf("%v", inouts.arr[:inouts.len])
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// BuildingDef
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+type BuildingDef struct {
+	Class    string
+	Category string
+	Dims     rl.Vector2
+	BeltIn   inputOutputs
+	BeltOut  inputOutputs
+	PipeIn   inputOutputs
+	PipeOut  inputOutputs
+}
+
+func (b BuildingDef) String() string {
+	s := fmt.Sprintf("{%s(%s) W=%v H=%v", b.Class, b.Category, b.Dims.X, b.Dims.Y)
+	if b.BeltIn.len > 0 {
+		s += fmt.Sprintf(" BeltIn=%s", b.BeltIn)
+	}
+	if b.BeltOut.len > 0 {
+		s += fmt.Sprintf(" BeltOut=%s", b.BeltOut)
+	}
+	if b.PipeIn.len > 0 {
+		s += fmt.Sprintf(" PipeIn=%s", b.PipeIn)
+	}
+	if b.PipeOut.len > 0 {
+		s += fmt.Sprintf(" PipeOut=%s", b.PipeOut)
+	}
+	return fmt.Sprintf("%s}", s)
 }
 
 type BuildingDefs []BuildingDef
@@ -196,4 +251,13 @@ func (defs BuildingDefs) Categories() []string {
 	}
 	sort.Strings(categories)
 	return categories
+}
+
+func (defs BuildingDefs) Index(class string) int {
+	for i, def := range defs {
+		if def.Class == class {
+			return i
+		}
+	}
+	return -1
 }

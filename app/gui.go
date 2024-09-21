@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/bonoboris/satisfied/colors"
+	"github.com/bonoboris/satisfied/log"
 	"github.com/gen2brain/raylib-go/raygui"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -50,6 +51,10 @@ func (g *Gui) Reset() {
 	g.Sidebar.Reset()
 }
 
+func (g *Gui) traceState() {
+	log.Trace("gui.sidebar", "activePath", g.Sidebar.activePath, "activeCategory", g.Sidebar.activeCategory, "activeBuilding", g.Sidebar.activeBuilding)
+}
+
 // Dispatch performs an [Gui] action, updating its state, and returns an new action to be performed
 //
 // See: [ActionHandler]
@@ -62,7 +67,7 @@ func (g *Gui) Dispatch(action Action) Action {
 
 type guiTopbar struct{}
 
-func (tb *guiTopbar) updateAndDraw() Action {
+func (tb *guiTopbar) updateAndDraw() (action Action) {
 	dims := rl.NewRectangle(0, 0, dims.Screen.X, TopbarHeight)
 
 	rl.DrawRectangleRec(dims, colors.Gray100)
@@ -74,22 +79,38 @@ func (tb *guiTopbar) updateAndDraw() Action {
 	raygui.EnableTooltip()
 
 	bounds := rl.NewRectangle(20, 10, 30, 30)
-	raygui.SetTooltip("New File")
-	raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_NEW, ""))
+	raygui.SetTooltip("New file")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_NEW, "")) {
+		log.Debug("topbar new file clicked")
+		action = app.doNew()
+	}
 
 	bounds.X += 50
-	raygui.SetTooltip("Open File")
-	raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_OPEN, ""))
+	raygui.SetTooltip("Open file")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_OPEN, "")) {
+		log.Debug("topbar open file clicked")
+		action = app.doOpen()
+	}
 
 	bounds.X += 50
-	raygui.SetTooltip("Save File")
-	raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_SAVE, ""))
+	raygui.SetTooltip("Save file (Ctrl+S)")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_SAVE, "")) {
+		log.Debug("topbar save file clicked")
+		action = app.doSave(app.filepath)
+	}
+
+	bounds.X += 50
+	raygui.SetTooltip("Save file as...")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_SAVE_CLASSIC, "")) {
+		log.Debug("topbar save file as clicked")
+		action = app.doSaveAs()
+	}
 
 	// Reset style and tooltip
 	raygui.DisableTooltip()
 	raygui.SetStyle(raygui.DEFAULT, raygui.TEXT_SIZE, pTextSize)
 
-	return nil
+	return action
 }
 
 // guiSidebar represents the sidebar of the application
@@ -130,10 +151,18 @@ func (sb *guiSidebar) init() {
 	paths := pathDefs.Classes()
 	sb.numPath = int32(len(paths))
 	sb.pathText = strings.Join(paths, ";")
+
+	log.Trace("gui.sidebar", "paths", paths)
+	log.Trace("gui.sidebar", "numPath", sb.numPath)
+	log.Trace("gui.sidebar", "pathText", sb.pathText)
+
 	categories := buildingDefs.Categories()
 	sb.numCategory = int32(len(categories))
 	sb.categoryText = strings.Join(categories, "\n")
 	sb.buildingIndices = make([][]int, len(categories))
+	log.Trace("gui.sidebar", "categories", categories)
+	log.Trace("gui.sidebar", "numCategory", sb.numCategory)
+	log.Trace("gui.sidebar", "categoryText", sb.categoryText)
 	for i, def := range buildingDefs {
 		idx := slices.Index(categories, def.Category)
 		sb.buildingIndices[idx] = append(sb.buildingIndices[idx], i)
@@ -145,10 +174,13 @@ func (sb *guiSidebar) init() {
 			classes[j] = buildingDefs[idx].Class
 		}
 		sb.buildingTexts[i] = strings.Join(classes, "\n")
+		log.Trace("gui.sidebar", "i", i, "buildingIndices[i]", cat_idxs)
+		log.Trace("gui.sidebar", "i", i, "buildingTexts[i]", sb.buildingTexts[i])
 	}
 	sb.activePath = -1
 	sb.activeCategory = -1
 	sb.activeBuilding = -1
+	gui.traceState()
 }
 
 func (sb *guiSidebar) drawLine(dims rl.Rectangle, yOffset float32) {
@@ -167,6 +199,8 @@ func (sb *guiSidebar) drawPathsControls(dims rl.Rectangle, yOffset float32) Acti
 		sb.activePath = newActive
 		sb.activeCategory = -1
 		sb.activeBuilding = -1
+		log.Debug("sidebar path clicked", "defIdx", newActive)
+		gui.traceState()
 		// newActive matches with actual index in [pathDefs]
 		return newPath.doInit(int(newActive))
 	}
@@ -183,7 +217,9 @@ func (sb *guiSidebar) drawCategoryControls(dims rl.Rectangle, yOffset float32) A
 		sb.activeCategory = newActive
 		sb.activePath = -1
 		sb.activeBuilding = -1
-		return appMode.doSwitchMode(ModeNormal, ResetAll().WithGui(false))
+		log.Debug("sidebar category clicked", "catIdx", sb.activeCategory)
+		gui.traceState()
+		return app.doSwitchMode(ModeNormal, ResetAll().WithGui(false))
 	}
 	return nil
 }
@@ -197,7 +233,10 @@ func (sb *guiSidebar) drawBuildingControls(dims rl.Rectangle, yOffset float32) A
 		// to an inactive one (newActive == -1) by clicking on the same toggle
 		sb.activeBuilding = newActive
 		sb.activePath = -1
-		return newBuilding.doInit(sb.buildingIndices[sb.activeCategory][newActive])
+		defIdx := sb.buildingIndices[sb.activeCategory][newActive]
+		log.Debug("sidebar building clicked", "defIdx", defIdx)
+		gui.traceState()
+		return newBuilding.doInit(defIdx)
 	}
 	return nil
 }
@@ -249,7 +288,7 @@ func (sb *guiStatusbar) updateAndDraw() Action {
 
 	// left aligned text
 	lpos := dims.TopLeft().Add(vec2(5, 5))
-	ltext := fmt.Sprintf("FPS=% 3d | Mode=%v", int(rl.GetFPS()), appMode)
+	ltext := fmt.Sprintf("FPS=% 3d | %12v | Building Draws=%d | Path Draws=%d", int(rl.GetFPS()), app.Mode, app.drawCounts.Buildings, app.drawCounts.Paths)
 	rl.DrawTextEx(font, ltext, lpos, 24, 1, colors.Gray700)
 
 	// right aligned text

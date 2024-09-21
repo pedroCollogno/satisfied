@@ -79,7 +79,10 @@ func (g Grid) Draw() {
 	// mouse lines
 	if mouse.InScene {
 		c := colors.WithAlpha(colors.Green500, 0.5)
-		pos := mouse.Middle.LastUpSnappedPos
+		pos := mouse.SnappedPos
+		if camera.Zooming {
+			pos = camera.WorldPos(camera.ZoomAt)
+		}
 		rl.DrawLineEx(vec2(pos.X, s.Y), vec2(pos.X, e.Y), 2.*px, c)
 		rl.DrawLineEx(vec2(s.X, pos.Y), vec2(e.X, pos.Y), 2.*px, c)
 	}

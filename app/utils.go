@@ -1,6 +1,10 @@
 package app
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
+
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
@@ -74,7 +78,7 @@ func SwapInsert[T any](s []T, i int, v T) []T {
 func SwapDeleteMany[T any](s []T, idxs []int) []T {
 	// reverse order because we are deleting elements
 	for i := len(idxs) - 1; i >= 0; i-- {
-		s = SwapDelete(s, i)
+		s = SwapDelete(s, idxs[i])
 	}
 	return s
 }
@@ -117,4 +121,38 @@ func SortedIntsIndex(a []int, x int) int {
 		return i
 	}
 	return -1
+}
+
+// NormalizePath normalizes a path to use the OS path separator.
+//
+// It preserves the trailing separator if any.
+func NormalizePath(p string) string {
+	ps := strings.Split(p, string(os.PathListSeparator))
+	for i, p := range ps {
+		p = filepath.ToSlash(p)
+		endSep := len(p) > 0 && p[len(p)-1] == '/'
+		p = filepath.FromSlash(p)
+		p = filepath.Clean(p)
+		if endSep {
+			ps[i] = p + string(os.PathSeparator)
+		} else {
+			ps[i] = p
+		}
+	}
+	return strings.Join(ps, string(os.PathListSeparator))
+}
+
+// Replaces single and double quotes with asterisks.
+func RemoveQuotes(s string) string {
+	return strings.ReplaceAll(strings.ReplaceAll(s, `"`, "*"), `'`, "*")
+}
+
+func CheckCollisionRecLine(rec rl.Rectangle, p1, p2 rl.Vector2) bool {
+	tl, tr, bl, br := rec.TopLeft(), rec.TopRight(), rec.BottomLeft(), rec.BottomRight()
+	var p rl.Vector2
+	return rec.CheckCollisionPoint(p1) || rec.CheckCollisionPoint(p2) ||
+		rl.CheckCollisionLines(p1, p2, tl, tr, &p) ||
+		rl.CheckCollisionLines(p1, p2, bl, br, &p) ||
+		rl.CheckCollisionLines(p1, p2, tl, bl, &p) ||
+		rl.CheckCollisionLines(p1, p2, tr, br, &p)
 }

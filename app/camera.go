@@ -5,6 +5,7 @@ package app
 import (
 	"fmt"
 
+	"github.com/bonoboris/satisfied/log"
 	"github.com/bonoboris/satisfied/math32"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -30,6 +31,22 @@ var camera = Camera{}
 type Camera struct {
 	// inner state
 	camera rl.Camera2D
+	// true if camera is currently zooming (middle mouse button down)
+	Zooming bool
+	// zoom at position
+	ZoomAt rl.Vector2
+}
+
+func (c Camera) traceState(key, val string) {
+	if key != "" && val != "" {
+		log.Trace("camera", key, val, "zoom", c.camera.Zoom, "target", c.camera.Target, "offset", c.camera.Offset, "zooming", c.Zooming, "zoomAt", c.ZoomAt)
+	} else {
+		log.Trace("camera", "zoom", c.camera.Zoom, "target", c.camera.Target, "offset", c.camera.Offset, "zooming", c.Zooming, "zoomAt", c.ZoomAt)
+	}
+}
+
+func (c Camera) traceStateBefore() {
+	log.Trace("camera", "zoom", c.camera.Zoom, "target", c.camera.Target, "offset", c.camera.Offset, "zooming", c.Zooming, "zoomAt", c.ZoomAt)
 }
 
 // Zoom returns the current zoom level
@@ -56,7 +73,7 @@ func (c *Camera) EndMode2D() { rl.EndMode2D() }
 // [TargetCamera] actions does not have follow up actions.
 func (c *Camera) Update() {
 	// arrow keys
-	if !appMode.CameraArrowsKeyEnabled() {
+	if app.Mode == ModeNormal {
 		switch keyboard.Pressed {
 		case rl.KeyRight:
 			c.doPan(vec2(-moveDelta, 0))
@@ -92,12 +109,17 @@ func (c *Camera) Update() {
 		if mouse.Right.Down {
 			// paning
 			c.doPan(mouse.ScreenDelta)
+		} else if mouse.Middle.Pressed {
+			c.Zooming = true
+			c.ZoomAt = mouse.ScreenPos
+		} else if mouse.Middle.Released {
+			c.Zooming = false
 		} else if mouse.Middle.Down {
 			// zooming by middle mouse button drag
 			if math32.Abs(mouse.ScreenDelta.X) > math32.Abs(mouse.ScreenDelta.Y) {
-				camera.doZoom(mouse.ScreenDelta.X*zoomPerPx, mouse.Middle.LastUpScreenPos)
+				camera.doZoom(mouse.ScreenDelta.X*zoomPerPx, c.ZoomAt)
 			} else {
-				camera.doZoom(mouse.ScreenDelta.Y*zoomPerPx, mouse.Middle.LastUpScreenPos)
+				camera.doZoom(mouse.ScreenDelta.Y*zoomPerPx, c.ZoomAt)
 			}
 		} else if mouse.Wheel != 0 {
 			// zooming by mouse wheel
@@ -108,14 +130,23 @@ func (c *Camera) Update() {
 
 // doReset resets camera state (default zoom, target (0,0) and offset middle of the scene)
 func (c *Camera) doReset() Action {
+	c.traceState("before", "doReset")
+	log.Debug("camera.doReset")
 	c.camera.Zoom = zoomDefault
 	c.camera.Target = vec2(0, 0)
 	c.camera.Offset = dims.Scene.Center()
+	c.traceState("after", "doReset")
 	return nil
 }
 
 // doZoom zooms the camera by a given amount at a given position
 func (c *Camera) doZoom(by float32, at rl.Vector2) Action {
+	c.traceState("before", "doZoom")
+	if mouse.Middle.Down {
+		log.Trace("camera.doZoom", "by", by, "at", at) // zooming by mouse wheel -> tracing
+	} else {
+		log.Debug("camera.doZoom", "by", by, "at", at) // zooming by keyboard -> tracing
+	}
 	// Set target at world position
 	c.camera.Target = c.WorldPos(at)
 	// Set offset at screen position
@@ -123,13 +154,21 @@ func (c *Camera) doZoom(by float32, at rl.Vector2) Action {
 	// Change zoom
 	newZoom := c.camera.Zoom * math32.Pow(zoomFactor, by)
 	c.camera.Zoom = min(max(newZoom, zoomMin), zoomMax)
+	c.traceState("after", "doZoom")
 	return nil
 }
 
 // doPan pans the camera by a given amount
 func (c *Camera) doPan(by rl.Vector2) Action {
+	c.traceState("before", "doPan")
+	if mouse.Right.Down { // panning by mouse movement -> tracing
+		log.Trace("camera.doPan", "by", by)
+	} else {
+		log.Debug("camera.doPan", "by", by) // panning by keyboard -> tracing
+	}
 	// Set target at world position
 	c.camera.Offset = c.camera.Offset.Add(by)
+	c.traceState("after", "doPan")
 	return nil
 }
 

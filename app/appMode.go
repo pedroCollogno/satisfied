@@ -1,8 +1,8 @@
 package app
 
-type AppMode int
+import "strings"
 
-var appMode AppMode
+type AppMode int
 
 const (
 	// ModeNormal is the default mode
@@ -20,11 +20,11 @@ func (mode AppMode) String() string {
 	case ModeNormal:
 		return "Normal"
 	case ModeNewPath:
-		return "NewPath"
+		return "New Path"
 	case ModeNewBuilding:
-		return "NewBuilding"
+		return "New Building"
 	case ModeSelection:
-		return "Selected"
+		return "Selection"
 	default:
 		return "Invalid"
 	}
@@ -37,43 +37,21 @@ func (m AppMode) Assert(mode AppMode) {
 	}
 }
 
-// doSwitchMode sets [AppMode] to the given mode and reset other modes state
-//
-// [ActionHandler] for [ActionSwitchMode]
-//
-// See: [ActionHandler]
-func (m *AppMode) doSwitchMode(mode AppMode, resets Resets) Action {
-	*m = mode
-	if resets.Selector {
-		selector.Reset()
-	}
-	if resets.NewPath {
-		newPath.Reset()
-	}
-	if resets.NewBuilding {
-		newBuilding.Reset()
-	}
-	if resets.Selection {
-		selection.Reset()
-	}
-	if resets.Gui {
-		gui.Reset()
-	}
-	return nil
-}
-
 ////////////////////////////////////////////////////////////////////////////////////////////////////
-// Resets for [AppMode.doSwitchMode]
+// Resets for [App.doSwitchMode]
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
+// TODO: Make it a flag set
 type Resets struct {
 	Selector    bool
 	NewPath     bool
 	NewBuilding bool
 	Selection   bool
 	Gui         bool
+	Camera      bool
 }
 
+// ResetAll resets all states but the camera.
 func ResetAll() Resets {
 	return Resets{
 		Selector:    true,
@@ -81,7 +59,31 @@ func ResetAll() Resets {
 		NewBuilding: true,
 		Selection:   true,
 		Gui:         true,
+		Camera:      false,
 	}
+}
+
+func (r Resets) String() string {
+	ons := make([]string, 0, 6)
+	if r.Selector {
+		ons = append(ons, "Selector")
+	}
+	if r.NewPath {
+		ons = append(ons, "NewPath")
+	}
+	if r.NewBuilding {
+		ons = append(ons, "NewBuilding")
+	}
+	if r.Selection {
+		ons = append(ons, "Selection")
+	}
+	if r.Gui {
+		ons = append(ons, "Gui")
+	}
+	if r.Camera {
+		ons = append(ons, "Camera")
+	}
+	return strings.Join(ons, " ")
 }
 
 func (r Resets) WithSelector(v bool) Resets {
@@ -109,16 +111,7 @@ func (r Resets) WithGui(v bool) Resets {
 	return r
 }
 
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Helpers
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// Returns whether to pan the camera on arrow keys press
-func (m AppMode) CameraArrowsKeyEnabled() bool {
-	return m == ModeNormal || m == ModeSelection && selection.mode == SelectionNormal
-}
-
-// Returns whether to undo/redo the scene on Ctrl+Z/Y keys press
-func (m AppMode) UndoRedoKeyEnabled() bool {
-	return m == ModeNormal || m == ModeSelection && selection.mode == SelectionNormal
+func (r Resets) WithCamera(v bool) Resets {
+	r.Camera = v
+	return r
 }

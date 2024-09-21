@@ -8,6 +8,7 @@ import (
 	"sort"
 
 	"github.com/bonoboris/satisfied/colors"
+	"github.com/bonoboris/satisfied/log"
 	"github.com/bonoboris/satisfied/math32"
 	"github.com/bonoboris/satisfied/matrix"
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -27,7 +28,17 @@ type Selection struct {
 	transform selectionTransform
 }
 
+func (s Selection) traceState(key, val string) {
+	if key != "" && val != "" {
+		log.Trace("selection", key, val, "mode", s.mode)
+	}
+	s.sceneSubset.traceState()
+	s.transform.traceState()
+	log.Trace("selection", "mode", s.mode)
+}
+
 func (s *Selection) Reset() {
+	log.Debug("selection.reset")
 	s.buildingsIdxs = s.buildingsIdxs[:0]
 	s.pathsIdxs = s.pathsIdxs[:0]
 	s.mode = SelectionNormal
@@ -75,6 +86,10 @@ type sceneSubset struct {
 	buildingsIdxs []int
 	// bounds of the subset (the smallest rectangle that contains all the objects)
 	bounds rl.Rectangle
+}
+
+func (s sceneSubset) traceState() {
+	log.Trace("selection.sceneSubset", "pathsIdxs", s.pathsIdxs, "buildingsIdxs", s.buildingsIdxs, "bounds", s.bounds)
 }
 
 // Returns whether scene building at idx is selected
@@ -150,6 +165,19 @@ type selectionTransform struct {
 	bounds rl.Rectangle
 }
 
+func (s selectionTransform) traceState() {
+	if log.WillTrace() {
+		for i, p := range s.paths {
+			log.Trace("selectionTransform.paths", "i", i, "value", p, "invalid", s.invalidPaths[i])
+		}
+		for i, b := range s.buildings {
+			log.Trace("selectionTransform.buildings", "i", i, "value", b, "invalid", s.invalidBuildings[i])
+		}
+		log.Trace("selectionTransform", "isValid", s.isValid, "bounds", s.bounds)
+		log.Trace("selectionTransform", "rot", s.rot, "startPos", s.startPos, "endPos", s.endPos)
+	}
+}
+
 func (s *selectionTransform) reset() {
 	s.rot = 0
 	s.startPos = rl.Vector2{}
@@ -161,6 +189,11 @@ func (s *selectionTransform) reset() {
 	s.invalidBuildings = s.invalidBuildings[:0]
 	s.isValid = false
 	s.bounds = rl.Rectangle{}
+}
+
+func (s selectionTransform) isIdentity() bool {
+	translate := grid.Snap(s.endPos.Subtract(s.startPos))
+	return s.rot%360 == 0 && translate.X == 0 && translate.Y == 0
 }
 
 // Matrix returns the rotation matrix of the selection
@@ -257,10 +290,12 @@ func (s *selectionTransform) recompute(ss sceneSubset, mode SelectionMode) {
 //
 // See: [GetActionFunc]
 func (s *Selection) GetAction() Action {
-	appMode.Assert(ModeSelection)
+	app.Mode.Assert(ModeSelection)
 	switch s.mode {
 	case SelectionNormal:
 		switch keyboard.Pressed {
+		case rl.KeyEscape:
+			return app.doSwitchMode(ModeNormal, ResetAll())
 		case rl.KeyD:
 			// Duplicate use center of current selection as start position
 			return s.doBeginTransformation(SelectionDuplicate, s.bounds.Center())
@@ -290,7 +325,10 @@ func (s *Selection) GetAction() Action {
 		}
 	case SelectionDuplicate:
 		// TODO: Implement arrow keys nudging ?
-		if keyboard.Pressed == rl.KeyR {
+		switch keyboard.Pressed {
+		case rl.KeyEscape:
+			return s.doEndTransformation(true)
+		case rl.KeyR:
 			return s.doRotate()
 		}
 		if mouse.Left.Released {
@@ -300,7 +338,10 @@ func (s *Selection) GetAction() Action {
 			return s.doMoveTo(mouse.Pos)
 		}
 	case SelectionDrag:
-		if keyboard.Pressed == rl.KeyR {
+		switch keyboard.Pressed {
+		case rl.KeyEscape:
+			return s.doEndTransformation(true)
+		case rl.KeyR:
 			return s.doRotate()
 		}
 		if mouse.Left.Released {
@@ -314,6 +355,7 @@ func (s *Selection) GetAction() Action {
 }
 
 func (s *Selection) doInitSingle(obj Object, mode SelectionMode, dragPos rl.Vector2) Action {
+	log.Debug("selection.doInitSingle", "obj", obj, "mode", mode, "dragPos", dragPos)
 	s.Reset()
 	switch obj.Type {
 	case TypeBuilding:
@@ -335,12 +377,18 @@ func (s *Selection) doInitSingle(obj Object, mode SelectionMode, dragPos rl.Vect
 		s.transform.endPos = s.bounds.Center()
 	}
 	s.transform.recompute(s.sceneSubset, mode) // noop transformation ->uses fast path
-	return appMode.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
+	s.traceState("after", "doBeginTransformation")
+	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
 }
 
 // doInitSceneSubset initializes a new selection from a subset of the scene, in [SelectionNormal] mode
 func (s *Selection) doInitSceneSubset(ss sceneSubset) Action {
+	log.Debug("selection.doInitSceneSubset", "pathsIdxs", ss.pathsIdxs, "buildingsIdxs", ss.buildingsIdxs, "bounds", ss.bounds)
 	s.Reset()
+	if ss.IsEmpty() {
+		s.traceState("after", "doInitSceneSubset")
+		return app.doSwitchMode(ModeNormal, ResetAll())
+	}
 	s.buildingsIdxs = ss.buildingsIdxs
 	s.pathsIdxs = ss.pathsIdxs
 	s.bounds = ss.bounds
@@ -348,10 +396,12 @@ func (s *Selection) doInitSceneSubset(ss sceneSubset) Action {
 	s.transform.startPos = s.bounds.Center()
 	s.transform.endPos = s.bounds.Center()
 	s.transform.recompute(s.sceneSubset, s.mode) // noop transformation ->uses fast path
-	return appMode.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
+	s.traceState("after", "doInitSceneSubset")
+	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
 }
 
 func (s *Selection) doInitRectangle(rect rl.Rectangle, mode SelectionMode, dragPos rl.Vector2) Action {
+	log.Debug("selection.doInitRectangle", "rect", rect, "mode", mode, "dragPos", dragPos)
 	s.Reset()
 	for i, b := range scene.Buildings {
 		bounds := b.Bounds()
@@ -365,6 +415,11 @@ func (s *Selection) doInitRectangle(rect rl.Rectangle, mode SelectionMode, dragP
 			s.pathsIdxs = append(s.pathsIdxs, i)
 		}
 	}
+	if s.IsEmpty() {
+		s.traceState("after", "doInitRectangle")
+		return app.doSwitchMode(ModeNormal, ResetAll())
+	}
+
 	sort.Ints(s.pathsIdxs)
 	s.updateBounds()
 	s.mode = mode
@@ -376,61 +431,66 @@ func (s *Selection) doInitRectangle(rect rl.Rectangle, mode SelectionMode, dragP
 		s.transform.endPos = s.bounds.Center()
 	}
 	s.transform.recompute(s.sceneSubset, mode) // noop transformation -> uses fast path
-	return appMode.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
+	s.traceState("after", "doInitSingle")
+	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
 }
 
 func (s *Selection) doDelete() Action {
-	appMode.Assert(ModeSelection)
+	s.traceState("before", "doDelete")
+	log.Debug("selection.doDelete")
+	app.Mode.Assert(ModeSelection)
 	assert(s.mode == SelectionNormal, "cannot delete selection in "+s.mode.String())
-	if len(s.buildingsIdxs) > 0 {
-		scene.Buildings = SwapDeleteMany(scene.Buildings, s.buildingsIdxs)
-	}
-	if len(s.pathsIdxs) > 0 {
-		scene.Paths = SwapDeleteMany(scene.Paths, s.pathsIdxs)
-	}
-	if s.Contains(scene.Hovered) {
-		// recompute hovered object in case it was deleted
-		scene.Hovered = scene.GetObjectAt(mouse.Pos)
-	}
-	return appMode.doSwitchMode(ModeNormal, ResetAll())
+	scene.DeleteObjects(s.pathsIdxs, s.buildingsIdxs)
+	s.traceState("after", "doDelete")
+	return app.doSwitchMode(ModeNormal, ResetAll())
 }
 
 func (s *Selection) doBeginTransformation(mode SelectionMode, pos rl.Vector2) Action {
-	rl.TraceLog(rl.LogWarning, fmt.Sprintf("SelectionActionBeginTransformation: mode=%v pos=%v", mode, pos))
-	appMode.Assert(ModeSelection)
+	s.traceState("before", "doBeginTransformation")
+	log.Debug("selection.doBeginTransformation", "mode", mode, "pos", pos)
+	app.Mode.Assert(ModeSelection)
 	s.transform.reset()
 	s.mode = mode
 	s.transform.startPos = pos
 	s.transform.endPos = pos
 	s.transform.recompute(s.sceneSubset, mode) // noop transformation -> uses fast path
+	s.traceState("after", "doBeginTransformation")
 	return nil
 }
 
 func (s *Selection) doMoveBy(delta rl.Vector2) Action {
-	appMode.Assert(ModeSelection)
+	s.traceState("before", "doMoveBy")
+	log.Debug("selection.doMoveBy", "delta", delta, "selection.mode", s.mode)
+	app.Mode.Assert(ModeSelection)
 	if s.mode == SelectionNormal {
 		s.transform.startPos = s.bounds.Center()
 		s.transform.endPos = s.bounds.Center().Add(delta)
 		s.transform.rot = 0
 		s.transform.recompute(s.sceneSubset, s.mode)
 		// will apply the translation if it's valid and reset transformation in any case
+		s.traceState("after", "doMoveBy")
 		return s.doEndTransformation(false)
 	} else {
 		s.transform.endPos = s.transform.endPos.Add(delta)
 	}
+	s.traceState("after", "doMoveBy")
 	return nil
 }
 
 func (s *Selection) doMoveTo(pos rl.Vector2) Action {
-	appMode.Assert(ModeSelection)
+	s.traceState("before", "doMoveTo")
+	log.Trace("selection.doMoveTo", "pos", pos) // moving by mouse -> tracing
+	app.Mode.Assert(ModeSelection)
 	s.transform.endPos = pos
 	s.transform.recompute(s.sceneSubset, s.mode)
+	s.traceState("after", "doMoveTo")
 	return nil
 }
 
 func (s *Selection) doRotate() Action {
-	rl.TraceLog(rl.LogWarning, fmt.Sprintf("SelectionActionRotate: mode=%v", s.mode))
-	appMode.Assert(ModeSelection)
+	s.traceState("before", "doRotate")
+	log.Debug("selection.doRotate", "selection.mode", s.mode)
+	app.Mode.Assert(ModeSelection)
 	if s.mode == SelectionNormal {
 		// try rotate the selection
 		s.transform.startPos = s.bounds.Center()
@@ -438,31 +498,41 @@ func (s *Selection) doRotate() Action {
 		s.transform.rot = 90
 		s.transform.recompute(s.sceneSubset, s.mode)
 		// will apply the rotation if it's valid and reset transformation in any case
+		s.traceState("after", "doRotate")
 		return s.doEndTransformation(false)
 	}
 
 	s.transform.rot += 90
 	s.transform.recompute(s.sceneSubset, s.mode)
+	s.traceState("after", "doRotate")
 	return nil
 }
 
 func (s *Selection) doEndTransformation(discard bool) Action {
-	rl.TraceLog(rl.LogWarning,
-		fmt.Sprintf("SelectionActionEndTransformation: mode=%v discard=%v isValid=%v rot=%v translate=%v",
-			s.mode, discard, s.transform.isValid, s.transform.rot, s.transform.endPos.Subtract(s.transform.startPos)),
-	)
-	appMode.Assert(ModeSelection)
-	if !discard && s.transform.isValid {
-		switch s.mode {
-		case SelectionNormal, SelectionDrag:
+	s.traceState("before", "doEndTransformation")
+	log.Debug("selection.doEndTransformation", "discard", discard, "selection.mode", s.mode)
+	app.Mode.Assert(ModeSelection)
+	switch s.mode {
+	case SelectionNormal, SelectionDrag:
+		if !discard && !s.transform.isIdentity() && s.transform.isValid {
 			scene.ModifyObjects(s.pathsIdxs, s.transform.paths, s.buildingsIdxs, s.transform.buildings)
 			s.bounds = s.transform.bounds
-		case SelectionDuplicate:
+		}
+		// in any case, reset mode & transform
+		s.transform.reset()
+		s.mode = SelectionNormal
+	case SelectionDuplicate:
+		if !discard && !s.transform.isIdentity() && s.transform.isValid {
 			scene.AddObjects(s.transform.paths, s.transform.buildings)
 		}
+		if discard {
+			// only on discard -> reset mode & transform
+			s.transform.reset()
+			s.mode = SelectionNormal
+		}
+
 	}
-	s.transform.reset()
-	s.mode = SelectionNormal
+	s.traceState("after", "doEndTransformation")
 	return nil
 }
 

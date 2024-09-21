@@ -30,7 +30,7 @@ const (
 // See:
 // - [ActionHandler]
 // - [GetActionFunc]
-// - [GetAction]
+// - [getAction]
 // - [DispatchAction]
 type Action interface {
 	// Returns which app mode the action is for
@@ -66,15 +66,30 @@ type ActionHandler func(Action) Action
 // [TargetApp] actions
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// ActionSwitchMode - switch app mode
+// AppActionSwitchMode - switch app mode
 //
 // This action terminates the action chain in the current frame.
-type ActionSwitchMode struct {
+type AppActionSwitchMode struct {
 	Mode   AppMode
 	Resets Resets
 }
 
-func (a ActionSwitchMode) Target() ActionTarget { return TargetApp }
+// AppActionNew - create a new project
+type AppActionNew struct{}
+
+// AppActionSave - save the current project to a file
+type AppActionSave struct{ Filepath string }
+
+// AppActionSaveAs - save the current project to a new file
+type AppActionSaveAs struct{}
+
+// AppActionOpen - open and load a project from a file
+type AppActionOpen struct{}
+
+func (a AppActionSwitchMode) Target() ActionTarget { return TargetApp }
+func (a AppActionSave) Target() ActionTarget       { return TargetApp }
+func (a AppActionSaveAs) Target() ActionTarget     { return TargetApp }
+func (a AppActionOpen) Target() ActionTarget       { return TargetApp }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // [TargetGui] actions

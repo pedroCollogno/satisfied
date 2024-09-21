@@ -28,6 +28,21 @@ go build
 
 ```sh
 CGO_CPPFLAGS="-O3 -DNDEBUG -flto" go build -ldflags="-s -w -H=windowsgui"
+
+```
+### Usage
+
+```sh
+Usage: satisfied.exe [options] [FILE]
+
+FILE is an optional path to a satisfied project file to load.
+
+Options:
+  --fps (int)   Target / Max FPS (default 30)
+                (use a low value when using -vv to reduce the ammount of logs) 
+  -q            WARN verbosity
+  -v            DEBUG verbosity
+  -vv           TRACE verbosity
 ```
 
 ## Why this project?
@@ -50,19 +65,25 @@ This is more of a **learning & personal** project right now, so **use it at your
 - [x] Single / multi selection
 - [x] Click and drag to move selection
 - [x] Delete selection
-- [x] Undo / redo (WIP)
+- [x] Undo / redo (may be buggy, hard to reproduce)
 - [ ] Move paths by their ends
-- [ ] Save and load projects
+- [x] Save and load projects
 - [ ] Complete buildings list for Production / Power / Logistics related buildings
 - [ ] Scroll bar in side panel
 - [ ] Keybindings displayed somewhere (status bar or popup)
-- [ ] Logs/crash reports 
+- [x] Logs/crash reports (logging is mostly done in the console, need to add log file ? crash report) 
 - [ ] Free text box tool
 
 ### Other goals
 
 A list of features that may or may not happen in the future.
 
+- [ ] Reasonable performances (~30fps and low GPU usage for < 1000 buildings on screen)
+    - [ ] Maybe use a render texture for all buildings ?
+- [ ] Add / remove to selection
+    - [ ] Add / remove single object to selection by ctrl/shift + click
+    - [ ] Add / remove rectangle to selection by ctrl/shift + drag
+- [ ] Selector filter: allows to select / deselect a specific type of object
 - [ ] Anchor paths to building inputs / outputs
 - [x] Add a `Action` interface:
 
@@ -87,9 +108,10 @@ A list of features that may or may not happen in the future.
     - [ ] Item cost of factory / selection
     - [ ] Compute production (static)
 - [ ] Settings / customization (only if this is used by anyone other than me)
+    - [ ] Keyboard layout handling (at least AZERTY)
     - [ ] Remap keybindings
     - [ ] Change fonts / colors
-
+- [ ] Z-axis support: could be a system of layers with connect them ?
 
 ## Design / Architecture
 
@@ -97,6 +119,9 @@ The application is written in [Go](https://go.dev/) and uses [Raylib](https://ww
 
 I use a slightly modified version of [raylib-go](https://github.com/bonoboris/raylib-go) bindings 
 (check out the [original here](https://github.com/gen2brain/raylib-go)).
+
+I also rely on [tinyfiledialogs](https://sourceforge.net/projects/tinyfiledialogs/) with custom bindinds,
+to display files and message native dialogs.
 
 The codebase is split into files by topic; each of them may contains update and/or draw logic.
 
@@ -160,8 +185,9 @@ The codebase is split into files by topic; each of them may contains update and/
 #
 *other packages*
 - `matrix`: 3x3 transform matrix (translation, rotation, scaling)
-- `colors` package: color palette
-- `math32` package: some math functions on `float32` (std `math` only supports `float64`)
+- `colors`: color palette
+- `math32`: some math functions on `float32` (std `math` only supports `float64`)
+- `log`: logging package, with a colored terminal handler and an extra `Trace` level
 
 
 Each of the update related files usually defines a main struct representing its topic state, 
@@ -175,6 +201,11 @@ But we also need extra care on how we update those variable state to keep the da
 Because the codebase is mainly a single package, every variable, functions, and types are accessible from anywhere.
 I use exported indentifier as a indication that it is safe to access from outside its file
 (exceptions includes the global variable).
+
+## Dependencies
+
+- a [fork](https://github.com/bonoboris/raylib-go) of [raylib-go](https://github.com/gen2brain/raylib-go) bindings for [raylib](https://www.raylib.com/)  (ZLIB license)
+- [tinyfiledialogs](https://sourceforge.net/projects/tinyfiledialogs/) vendored with bindings in `tinyfiledialogs` package (ZLIB license)
 
 ## License
 

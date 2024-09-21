@@ -3,6 +3,7 @@ package app
 import (
 	"fmt"
 
+	"github.com/bonoboris/satisfied/log"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
@@ -15,60 +16,89 @@ type NewBuilding struct {
 	isValid  bool
 }
 
+func (nb NewBuilding) traceState(key, val string) {
+	if key != "" && val != "" {
+		log.Trace("newBuilding", key, val, "building", nb.building, "isValid", nb.isValid)
+	} else {
+		log.Trace("newBuilding", "building", nb.building, "isValid", nb.isValid)
+	}
+}
+
 // Reset resets the [NewBuilding] state
 func (nb *NewBuilding) Reset() {
+	nb.traceState("before", "Reset")
+	log.Debug("newBuilding.reset")
 	nb.building = Building{DefIdx: -1}
 	nb.isValid = false
+	nb.traceState("after", "Reset")
 }
 
 // GetAction processes inputs in [ModeNewBuilding], and returns an action to be performed.
 //
 // See: [GetActionFunc]
 func (nb *NewBuilding) GetAction() (action Action) {
-	appMode.Assert(ModeNewBuilding)
+	app.Mode.Assert(ModeNewBuilding)
 
-	if keyboard.Pressed == rl.KeyR {
+	switch keyboard.Pressed {
+	case rl.KeyEscape:
+		return app.doSwitchMode(ModeNormal, ResetAll())
+	case rl.KeyR:
 		return nb.doRotate()
+	}
+
+	if !mouse.InScene {
+		return nil
 	}
 	if mouse.Left.Released {
 		return nb.doPlace()
 	}
-	if mouse.InScene && !mouse.Left.Down {
+	if !mouse.Left.Down {
 		return nb.doMoveTo(mouse.SnappedPos)
 	}
 	return nil
 }
 
 func (nb *NewBuilding) doInit(defIdx int) Action {
+	nb.traceState("before", "doInit")
+	log.Debug("newBuilding.doInit", "defIdx", defIdx)
 	nb.building = Building{DefIdx: defIdx}
 	nb.isValid = true
 	resets := ResetAll().WithNewBuilding(false).WithGui(false)
-	return appMode.doSwitchMode(ModeNewBuilding, resets)
+	nb.traceState("after", "doInit")
+	return app.doSwitchMode(ModeNewBuilding, resets)
 }
 
 func (nb *NewBuilding) doMoveTo(pos rl.Vector2) Action {
-	appMode.Assert(ModeNewBuilding)
+	nb.traceState("before", "doMoveTo")
+	log.Trace("newBuilding.doMoveTo", "pos", pos) // moving by mouse -> tracing
+	app.Mode.Assert(ModeNewBuilding)
 	nb.building.Pos = pos
 	nb.isValid = scene.IsBuildingValid(nb.building, -1)
+	nb.traceState("after", "doMoveTo")
 	return nil
 }
 
 func (nb *NewBuilding) doRotate() Action {
-	appMode.Assert(ModeNewBuilding)
+	nb.traceState("before", "doRotate")
+	log.Debug("newBuilding.doRotate")
+	app.Mode.Assert(ModeNewBuilding)
 	nb.isValid = scene.IsBuildingValid(nb.building, -1)
 	nb.building.Rot += 90
+	nb.traceState("after", "doRotate")
 	return nil
 }
 
 func (nb *NewBuilding) doPlace() Action {
-	rl.TraceLog(rl.LogWarning, fmt.Sprintf("NewBuilding.doPlace: building=%v", nb.building))
-	appMode.Assert(ModeNewBuilding)
+	nb.traceState("before", "doPlace")
+	log.Debug("newBuilding.doPlace")
+	app.Mode.Assert(ModeNewBuilding)
 	nb.isValid = scene.IsBuildingValid(nb.building, -1)
 	if nb.isValid {
 		scene.AddBuilding(nb.building)
 	}
 	nb.building.Pos = mouse.SnappedPos
 	nb.isValid = true
+	nb.traceState("after", "doPlace")
 	return nil
 }
 
