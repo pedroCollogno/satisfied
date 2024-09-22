@@ -329,7 +329,7 @@ func (s *Selection) GetAction() Action {
 		if mouse.Left.Released {
 			return s.doEndTransformation(false)
 		}
-		if mouse.InScene && mouse.Left.Down {
+		if mouse.InScene {
 			return s.doMoveTo(mouse.Pos)
 		}
 	}
@@ -636,7 +636,7 @@ func (s Selection) BuildingDrawStateIterator() buildingDrawStateIterator {
 	var state DrawState
 	switch s.mode {
 	case SelectionNormal:
-		state = DrawSelected
+		state = DrawSkip // drawn later on top
 	case SelectionDrag:
 		state = DrawShadow
 	case SelectionDuplicate:
@@ -655,7 +655,7 @@ func (s Selection) PathDrawStateIterator() pathDrawStateIterator {
 	var state DrawState
 	switch s.mode {
 	case SelectionNormal:
-		state = DrawSelected
+		state = DrawSkip // drawn later on top
 	case SelectionDrag:
 		state = DrawShadow
 	case SelectionDuplicate:

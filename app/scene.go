@@ -166,6 +166,7 @@ func (op sceneOp) redo(s *Scene) ObjectSelection {
 			s.Buildings[idx] = op.New.Buildings[i]
 		}
 		newSel = op.Sel
+		newSel.recomputeBounds(s.ObjectCollection)
 
 	default:
 		panic("invalid scene operation type")
@@ -206,13 +207,7 @@ func (op sceneOp) undo(s *Scene) ObjectSelection {
 			s.Buildings[idx] = op.Old.Buildings[i]
 		}
 
-		newSel = ObjectSelection{
-			BuildingIdxs: Range(len(s.Buildings)-len(op.New.Buildings), len(s.Buildings)),
-		}
-		n := len(s.Paths)
-		for i := range n - len(op.New.Paths) {
-			newSel.PathIdxs = append(newSel.PathIdxs, PathSel{Idx: n + i, Start: true, End: true})
-		}
+		newSel = op.Sel
 		newSel.recomputeBounds(s.ObjectCollection)
 
 	default:
@@ -232,6 +227,7 @@ func (s *Scene) doSceneOp(op sceneOp) {
 	op.do(s)                             // actually perform the operation
 	s.history = append(s.history, op)    // append the operation to the history
 	s.historyPos++                       // increment history position
+	s.Hovered = Object{}                 // invalidate hovered object just in case
 }
 
 // AddPath adds the given path to the scene.
@@ -263,10 +259,6 @@ func (s *Scene) DeleteObjects(sel ObjectSelection) {
 	op.Old.Paths = CopyIdxs(op.Old.Paths, s.Paths, sel.FullPathIdxs())
 
 	s.doSceneOp(op)
-	if sel.Contains(scene.Hovered) {
-		// reset hovered object if it was deleted
-		scene.Hovered = Object{}
-	}
 }
 
 // ModifyObjects updates the given paths and buildings in the scene.
@@ -285,6 +277,7 @@ func (s *Scene) Undo() (bool, Action) {
 	if s.historyPos > 0 {
 		s.historyPos-- // decrement history position
 		op := s.history[s.historyPos]
+		s.Hovered = Object{} // invalidate hovered object just in case
 		// will switch to [ModeSelection] or [ModeNormal] if new selection is empty
 		return true, selection.doInitSelection(op.undo(s))
 	}
@@ -296,13 +289,20 @@ func (s *Scene) Undo() (bool, Action) {
 func (s *Scene) Redo() (bool, Action) {
 	if s.historyPos < len(s.history) {
 		op := s.history[s.historyPos]
-		s.historyPos++ // increment history position
+		s.historyPos++       // increment history position
+		s.Hovered = Object{} // invalidate hovered object just in case
 		// will switch to [ModeSelection] or [ModeNormal] if new selection is empty
 		return true, selection.doInitSelection(op.redo(s))
 	}
 	log.Warn("cannot redo operation", "reason", "no more operations to redo")
 	return false, nil
 }
+
+// HasUndo returns true if there are more undo operations to perform
+func (s *Scene) HasUndo() bool { return s.historyPos > 0 }
+
+// HasRedo returns true if there are more redo operations to perform
+func (s *Scene) HasRedo() bool { return s.historyPos < len(s.history) }
 
 // IsModified returns true if the scene has been modified since last save
 func (s *Scene) IsModified() bool {
@@ -427,6 +427,26 @@ func (s Scene) Draw() {
 		}
 		for _, b := range s.Buildings {
 			b.Draw(DrawNormal)
+		}
+	}
+
+	if app.Mode == ModeSelection && selection.mode == SelectionNormal {
+		// draw selection on top
+		for _, idx := range selection.BuildingIdxs {
+			s.Buildings[idx].Draw(DrawSelected)
+		}
+
+		for _, elt := range selection.PathIdxs {
+			p := s.Paths[elt.Idx]
+			if elt.Start && elt.End {
+				p.DrawBody(DrawSelected)
+			}
+			if elt.Start {
+				p.DrawStart(DrawSelected)
+			}
+			if elt.End {
+				p.DrawEnd(DrawSelected)
+			}
 		}
 	}
 

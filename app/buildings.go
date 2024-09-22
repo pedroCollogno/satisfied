@@ -77,6 +77,9 @@ func (b Building) DrawLabel(bounds rl.Rectangle) {
 }
 
 func (b Building) Draw(state DrawState) {
+	if state == DrawSkip {
+		return
+	}
 	mat := b.matrix()
 	def := b.Def()
 	bounds := mat.ApplyRec(0, 0, def.Dims.X, def.Dims.Y)

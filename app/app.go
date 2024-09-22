@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path"
+	"path/filepath"
 
 	"github.com/bonoboris/satisfied/colors"
 	"github.com/bonoboris/satisfied/log"
@@ -24,16 +25,6 @@ const (
 	DefaultTargetFPS = 30
 )
 
-func LoadSomeScene() {
-	for x := float32(0); x < 30; x += 10 {
-		b1 := Building{DefIdx: 0, Pos: vec2(x+2, 0), Rot: 0}
-		b2 := Building{DefIdx: 7, Pos: vec2(x, 20), Rot: 0}
-		scene.Buildings = append(scene.Buildings, b1, b2)
-		p := Path{DefIdx: 0, Start: vec2(x, 15), End: vec2(x, 7)}
-		scene.Paths = append(scene.Paths, p)
-	}
-}
-
 var app App
 
 // App contains application global state
@@ -44,14 +35,20 @@ type App struct {
 	filepath string
 	// window title
 	title string
-
+	// draw counts
 	drawCounts DrawCounts
+	// whether the app has panicked
+	hasPanicked bool
 }
 
 type DrawCounts struct {
 	Buildings int
 	Paths     int
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Load / save
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 // save project to file and updates window title and [App.filepath] on success
 func (a *App) saveFile(filepath string) error {
@@ -132,7 +129,6 @@ func (a *App) checkUnsavedChanges() bool {
 				return false
 			default:
 				panic("invalid button")
-
 			}
 		}
 	} else {
@@ -215,6 +211,70 @@ func (a *App) doSave(filepath string) Action {
 	return nil
 }
 
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// GUI actions
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+func (a *App) doUndo() Action {
+	if a.Mode == ModeNormal || a.Mode == ModeSelection && selection.mode == SelectionNormal {
+		scene.Undo()
+	}
+	return nil
+}
+
+func (a *App) doRedo() Action {
+	if a.Mode == ModeNormal || a.Mode == ModeSelection && selection.mode == SelectionNormal {
+		scene.Redo()
+	}
+	return nil
+}
+
+func (a *App) doDelete() Action {
+	switch app.Mode {
+	case ModeSelection:
+		if selection.mode == SelectionNormal {
+			return selection.doDelete()
+		}
+	}
+	return nil
+}
+
+func (a *App) doRotate() Action {
+	switch app.Mode {
+	case ModeNewPath:
+		return newPath.doReverse()
+	case ModeNewBuilding:
+		return newBuilding.doRotate()
+	case ModeSelection:
+		return selection.doRotate()
+	}
+	return nil
+}
+
+func (a *App) doDuplicate() Action {
+	switch app.Mode {
+	case ModeSelection:
+		if selection.mode == SelectionNormal {
+			return selection.doBeginTransformation(SelectionDuplicate, selection.Bounds.Center())
+		}
+	}
+	return nil
+}
+
+func (a *App) doDrag() Action {
+	switch app.Mode {
+	case ModeSelection:
+		if selection.mode == SelectionNormal {
+			return selection.doBeginTransformation(SelectionDrag, selection.Bounds.Center())
+		}
+	}
+	return nil
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Switch mode
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
 // doSwitchMode sets [App.Mode] to the given [AppMode] and reset other modes state
 //
 // See: [ActionHandler]
@@ -243,6 +303,10 @@ func (a *App) doSwitchMode(mode AppMode, resets Resets) Action {
 func (a *App) isNormal() bool {
 	return a.Mode == ModeNormal || a.Mode == ModeSelection && selection.mode == SelectionNormal
 }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Main functions
+////////////////////////////////////////////////////////////////////////////////////////////////////
 
 type AppOptions struct {
 	// A file to load
@@ -280,6 +344,9 @@ func Init(assets embed.FS, opts *AppOptions) error {
 	rl.SetTargetFPS(int32(opts.Fps))
 	rl.SetWindowState(windowFlags)
 	rl.SetExitKey(rl.KeyNull)
+	if icon, err := LoadIcon(assets); err == nil {
+		rl.SetWindowIcon(*icon)
+	}
 
 	log.Info("window initialized")
 
@@ -314,11 +381,12 @@ func Close() {
 
 // ShouldQuit returns true if the application should exit.
 func ShouldExit() bool {
-	return rl.WindowShouldClose()
+	return rl.WindowShouldClose() || app.hasPanicked
 }
 
 // Step updates and draw a frame.
 func Step() {
+	defer panicHandler()
 	update()
 	rl.BeginDrawing()
 	draw()
@@ -480,4 +548,68 @@ func updateAndDrawGui() {
 		//
 		// In most cases, [Gui.UpdateAndDraw] will recursively handle the action chain and return nil.
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// panic handler
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+const panicTitle = "Satisfied has crashed"
+
+const panicMessageNoBackupFile = `Satisfied has crashed and failed to backup current project.
+
+Error: %s
+
+Failed to backup reason: Cannot find user home directory.
+
+Sorry for the inconvenience, please report this issue to the developer.`
+
+const panicMessageErrBackup = `Satisfied has crashed and failed to backup current project.
+
+Error: %s
+
+Tried to backup in file: %s
+But failed because: %s
+
+Sorry for the inconvenience, please report this issue to the developer.`
+
+const panicMessageBackupOk = `Satisfied has crashed.
+
+Error: %s
+
+Current project has been saved in file: %s
+
+Sorry for the inconvenience, please report this issue to the developer.`
+
+func panicHandler() {
+	// TODO: save logs, link repo in error message.
+	panicErr := recover()
+	if panicErr == nil {
+		return
+	}
+	app.hasPanicked = true // schedule app exit
+	log.Fatal("application panic", "err", panicErr)
+	savepath := app.filepath
+	if savepath == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			msg := fmt.Sprintf(panicMessageNoBackupFile, panicErr)
+			tfd.MessageBox(panicTitle, msg, tfd.DialogOk, tfd.IconError, tfd.ButtonOkYes)
+			return
+		}
+		savepath = NormalizePath(filepath.Join(home, "recover.satisfied"))
+	} else {
+		savepath = NormalizePath(savepath)
+		ext := filepath.Ext(savepath)
+		savepath = savepath[:len(savepath)-len(ext)] + ".recover" + ext
+	}
+
+	if err := app.saveFile(savepath); err != nil {
+		msg := fmt.Sprintf(panicMessageErrBackup, panicErr, savepath, err)
+		tfd.MessageBox(panicTitle, msg, tfd.DialogOk, tfd.IconError, tfd.ButtonOkYes)
+		return
+	}
+
+	msg := fmt.Sprintf(panicMessageBackupOk, panicErr, savepath)
+	tfd.MessageBox(panicTitle, msg, tfd.DialogOk, tfd.IconError, tfd.ButtonOkYes)
 }

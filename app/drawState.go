@@ -16,6 +16,7 @@ const (
 	DrawSelected DrawState = 2
 	DrawInvalid  DrawState = 3
 	DrawShadow   DrawState = 4
+	DrawSkip     DrawState = 5
 
 	// Modifiers
 
@@ -41,6 +42,8 @@ func (state DrawState) transformColor(color rl.Color) rl.Color {
 		color = colors.Lerp(color, colors.Red500, 0.5)
 	case DrawShadow:
 		color = colors.Gray300
+	case DrawSkip:
+		return colors.Blank // FIXME: should panic ?
 	default:
 		panic("transformColor: invalid ToolState")
 	}

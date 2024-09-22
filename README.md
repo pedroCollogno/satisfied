@@ -16,9 +16,9 @@ I would recommend using [w64devkit](https://github.com/skeeto/w64devkit) to setu
 Extract it as instructed in the README, and add the `.../w64devkit/bin` folder to your `PATH` environment variable.
 
 #### Other platform, cross-compiling
-Refers to the [raylib-go](https://github.com/bonoboris/raylib-go) instructions for your platform.
+Not tested but it should work; it may need some tweaks, (at least for the icon).
 
-This should be enough as the project is not using any external dependencies other than raylib-go.
+Refers to the [raylib-go](https://github.com/bonoboris/raylib-go) instructions for your platform.
 
 #### Debug build
 ```sh
@@ -28,8 +28,14 @@ go build
 
 ```sh
 CGO_CPPFLAGS="-O3 -DNDEBUG -flto" go build -ldflags="-s -w -H=windowsgui"
-
 ```
+
+## Security / Privacy 
+
+This application does not collect any data, is 100% offline, does not read any file other than 
+the project files (.satisfied) you select.
+
+
 ### Usage
 
 ```sh
@@ -71,13 +77,14 @@ This is more of a **learning & personal** project right now, so **use it at your
 - [ ] Complete buildings list for Production / Power / Logistics related buildings
 - [ ] Scroll bar in side panel
 - [ ] Keybindings displayed somewhere (status bar or popup)
-- [x] Logs/crash reports (logging is mostly done in the console, need to add log file ? crash report) 
+- [x] Logs/crash reports (logging is mostly done in the console, need to ) 
 - [ ] Free text box tool
 
 ### Other goals
 
 A list of features that may or may not happen in the future.
 
+- [ ] Foundations: add foundations & foundation mode  
 - [ ] Reasonable performances (~30fps and low GPU usage for < 1000 buildings on screen)
     - [ ] Maybe use a render texture for all buildings ?
 - [ ] Add / remove to selection
@@ -85,17 +92,6 @@ A list of features that may or may not happen in the future.
     - [ ] Add / remove rectangle to selection by ctrl/shift + drag
 - [ ] Selector filter: allows to select / deselect a specific type of object
 - [ ] Anchor paths to building inputs / outputs
-- [x] Add a `Action` interface:
-
-    Action would be represent a state update to be preformed.
-    The idea is to decorelate inputs and state updates, and truly limit to state written by .Update() methods to their own; it could also be nice for implementing undo / redo.
-
-    Could split `func Update()` methods into `func ProcessInputs() Action` methods and `fn Update(Action) Action` methods, where the returned action (if any) would allow to change the app mode and set data in other state variables.
-
-    Example:\
-    `selector.ProcessInput()` could return a `SetSelectionFromRect` action, with the rect dimensions, it would be then be processed by `selection.Update()` to set the selection, which in turn
-    would return a `SetMode` action to change the app mode to `Selection` if needed.
-
 - [ ] Porting to app to the web, Rust + [raylib-rs](https://github.com/deltaphc/raylib-rs) + WASM
     - [ ] Local storage auto save
     - [ ] Import / export (to file or clipboard)
@@ -103,15 +99,15 @@ A list of features that may or may not happen in the future.
 - [ ] Make it look nice (game icons, texture for each building, nicer UI)
 - [ ] Quick access bar
 - [ ] Zones / groups to represents factories and/or production lines
-- [ ] Add items and recipes (big one)
-    - [ ] Add them for planning only
+- [ ] Add items and recipes
+    - [ ] Add them for planning / display only
     - [ ] Item cost of factory / selection
     - [ ] Compute production (static)
 - [ ] Settings / customization (only if this is used by anyone other than me)
     - [ ] Keyboard layout handling (at least AZERTY)
     - [ ] Remap keybindings
     - [ ] Change fonts / colors
-- [ ] Z-axis support: could be a system of layers with connect them ?
+- [ ] Depth support: could be a system of layers with elevators to connect them ?
 
 ## Design / Architecture
 

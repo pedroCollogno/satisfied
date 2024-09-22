@@ -102,3 +102,16 @@ func LoadAssets(assets embed.FS) error {
 	}
 	return nil
 }
+
+// LoadIcon loads the application icon
+func LoadIcon(assets embed.FS) (*rl.Image, error) {
+	data, err := readFile(assets, "assets/icon.png")
+	if err != nil {
+		return nil, err
+	}
+	img := rl.LoadImageFromMemory(".png", data, int32(len(data)))
+	if img == nil {
+		log.Error("cannot load icon as an image", "err", err)
+	}
+	return img, nil
+}

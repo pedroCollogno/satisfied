@@ -28,6 +28,9 @@ func (p Path) String() string {
 func (p Path) Def() PathDef { return pathDefs[p.DefIdx] }
 
 func (p Path) DrawStart(state DrawState) {
+	if state == DrawSkip {
+		return
+	}
 	def := p.Def()
 	if !dims.ExWorld.CheckCollisionPoint(p.Start) {
 		// skip drawing if path start is outside of the scene
@@ -39,6 +42,9 @@ func (p Path) DrawStart(state DrawState) {
 }
 
 func (p Path) DrawEnd(state DrawState) {
+	if state == DrawSkip {
+		return
+	}
 	def := p.Def()
 	if !dims.ExWorld.CheckCollisionPoint(p.End) {
 		// skip drawing if path end is outside of the scene
@@ -50,6 +56,9 @@ func (p Path) DrawEnd(state DrawState) {
 }
 
 func (p Path) DrawBody(state DrawState) {
+	if state == DrawSkip {
+		return
+	}
 	def := p.Def()
 	color := state.transformColor(def.Color)
 
@@ -82,6 +91,9 @@ func (p Path) DrawBody(state DrawState) {
 }
 
 func (p Path) Draw(state DrawState) {
+	if state == DrawSkip {
+		return
+	}
 	def := p.Def()
 	color := state.transformColor(def.Color)
 

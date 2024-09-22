@@ -78,6 +78,9 @@ func (tb *guiTopbar) updateAndDraw() (action Action) {
 	raygui.SetStyle(raygui.DEFAULT, raygui.TEXT_SIZE, 16)
 	raygui.EnableTooltip()
 
+	if !app.isNormal() { // begin file controls
+		raygui.Disable()
+	}
 	bounds := rl.NewRectangle(20, 10, 30, 30)
 	raygui.SetTooltip("New file")
 	if raygui.Button(bounds, raygui.IconText(raygui.ICON_FILE_NEW, "")) {
@@ -105,6 +108,64 @@ func (tb *guiTopbar) updateAndDraw() (action Action) {
 		log.Debug("topbar save file as clicked")
 		action = app.doSaveAs()
 	}
+	raygui.Enable() // end file controls
+
+	bounds.X += 50
+	rl.DrawLineEx(bounds.TopLeft(), bounds.BottomLeft(), 2, colors.Gray300)
+
+	if !(app.isNormal() && scene.HasUndo()) { // begin undo control
+		raygui.Disable()
+	}
+	bounds.X += 20
+	raygui.SetTooltip("Undo (Ctrl+Z)")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_UNDO, "")) {
+		log.Debug("topbar undo clicked")
+		_, action = scene.Undo()
+	}
+	raygui.Enable() // end undo control
+
+	if !(app.isNormal() && scene.HasRedo()) { // begin redo control
+		raygui.Disable()
+	}
+	bounds.X += 50
+	raygui.SetTooltip("Redo (Ctrl+Y)")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_REDO, "")) {
+		log.Debug("topbar redo clicked")
+		_, action = scene.Redo()
+	}
+	raygui.Enable() // end redo control
+
+	bounds.X += 50
+	rl.DrawLineEx(bounds.TopLeft(), bounds.BottomLeft(), 2, colors.Gray300)
+
+	bounds.X += 20
+	raygui.SetTooltip("Rotate (R)")
+	if !(app.Mode == ModeSelection || app.Mode == ModeNewPath || app.Mode == ModeNewBuilding) { // begin rotate control
+		raygui.Disable()
+	}
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_ROTATE, "")) {
+		log.Debug("topbar rotate clicked")
+		action = app.doRotate()
+	}
+	raygui.Enable() // end rotate control
+
+	if !(app.Mode == ModeSelection && selection.mode == SelectionNormal) { // begin selection transform controls
+		raygui.Disable()
+	}
+	bounds.X += 50
+	raygui.SetTooltip("Duplicate (D)")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_LAYERS, "")) {
+		log.Debug("topbar duplicate clicked")
+		action = app.doDuplicate()
+	}
+
+	bounds.X += 50
+	raygui.SetTooltip("Drag (LMB drag / V)")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_CURSOR_MOVE_FILL, "")) {
+		log.Debug("topbar drag clicked")
+		action = app.doDrag()
+	}
+	raygui.Enable() // end selection transform controls
 
 	// Reset style and tooltip
 	raygui.DisableTooltip()
@@ -292,7 +353,7 @@ func (sb *guiStatusbar) updateAndDraw() Action {
 	rl.DrawTextEx(font, ltext, lpos, 24, 1, colors.Gray700)
 
 	// right aligned text
-	rtext := fmt.Sprintf("x=%- 4d  y=%- 4d", int(mouse.SnappedPos.X), int(mouse.SnappedPos.Y))
+	rtext := fmt.Sprintf("X:%5d  Y:%5d", int(mouse.SnappedPos.X), int(mouse.SnappedPos.Y))
 	width := rl.MeasureTextEx(font, rtext, 24, 1).X
 	rpos := dims.TopRight().Add(vec2(-5-width, 5))
 	rl.DrawTextEx(font, rtext, rpos, 24, 1, colors.Gray700)
