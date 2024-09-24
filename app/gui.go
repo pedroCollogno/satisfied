@@ -7,6 +7,7 @@ import (
 
 	"github.com/bonoboris/satisfied/colors"
 	"github.com/bonoboris/satisfied/log"
+	"github.com/bonoboris/satisfied/text"
 	"github.com/gen2brain/raylib-go/raygui"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
@@ -16,6 +17,8 @@ const (
 	TopbarHeight = 50.0
 	// Side bar width in px
 	SidebarWidth = 300.0
+	// Details bar width in px
+	DetailsBarWidth = 300.0
 	// Status bar height in px
 	StatusBarHeight = 30.0
 )
@@ -24,9 +27,10 @@ var gui = Gui{}
 
 // Gui is a container struct for all the GUI elements
 type Gui struct {
-	Topbar    guiTopbar
-	Sidebar   guiSidebar
-	Statusbar guiStatusbar
+	Topbar     guiTopbar
+	Sidebar    guiSidebar
+	Detailsbar guiDetailsbar
+	Statusbar  guiStatusbar
 }
 
 // Precompute and store some static data
@@ -41,6 +45,7 @@ func (g *Gui) UpdateAndDraw() (action Action) {
 	// At most a single non nil action by frame should be returned from updateAndDraw calls
 	// we cannot press 2 buttons at the same time
 	action = orAction(action, g.Statusbar.updateAndDraw())
+	action = orAction(action, g.Detailsbar.updateAndDraw())
 	action = orAction(action, g.Sidebar.updateAndDraw())
 	action = orAction(action, g.Topbar.updateAndDraw())
 	return action
@@ -50,6 +55,9 @@ func (g *Gui) UpdateAndDraw() (action Action) {
 func (g *Gui) Reset() {
 	g.Sidebar.Reset()
 }
+
+// Whether the gui should captures key presses
+func (g *Gui) CapturesKeyPress() bool { return g.Detailsbar.textarea.Focused() }
 
 func (g *Gui) traceState() {
 	log.Trace("gui.sidebar", "activePath", g.Sidebar.activePath, "activeCategory", g.Sidebar.activeCategory, "activeBuilding", g.Sidebar.activeBuilding)
@@ -68,10 +76,10 @@ func (g *Gui) Dispatch(action Action) Action {
 type guiTopbar struct{}
 
 func (tb *guiTopbar) updateAndDraw() (action Action) {
-	dims := rl.NewRectangle(0, 0, dims.Screen.X, TopbarHeight)
+	bar := rl.NewRectangle(0, 0, dims.Screen.X, TopbarHeight)
 
-	rl.DrawRectangleRec(dims, colors.Gray100)
-	rl.DrawLineV(dims.BottomLeft(), dims.BottomRight(), colors.Gray300)
+	rl.DrawRectangleRec(bar, colors.Gray100)
+	rl.DrawLineV(bar.BottomLeft(), bar.BottomRight(), colors.Gray300)
 
 	// Enable tooltip & set font size to 16
 	pTextSize := raygui.GetStyle(raygui.DEFAULT, raygui.TEXT_SIZE)
@@ -120,7 +128,7 @@ func (tb *guiTopbar) updateAndDraw() (action Action) {
 	raygui.SetTooltip("Undo (Ctrl+Z)")
 	if raygui.Button(bounds, raygui.IconText(raygui.ICON_UNDO, "")) {
 		log.Debug("topbar undo clicked")
-		_, action = scene.Undo()
+		action = app.doUndo()
 	}
 	raygui.Enable() // end undo control
 
@@ -128,10 +136,10 @@ func (tb *guiTopbar) updateAndDraw() (action Action) {
 		raygui.Disable()
 	}
 	bounds.X += 50
-	raygui.SetTooltip("Redo (Ctrl+Y)")
+	raygui.SetTooltip("Redo (Ctrl+Y / Ctrl+Shift+Z)")
 	if raygui.Button(bounds, raygui.IconText(raygui.ICON_REDO, "")) {
 		log.Debug("topbar redo clicked")
-		_, action = scene.Redo()
+		action = app.doRedo()
 	}
 	raygui.Enable() // end redo control
 
@@ -149,7 +157,7 @@ func (tb *guiTopbar) updateAndDraw() (action Action) {
 	}
 	raygui.Enable() // end rotate control
 
-	if !(app.Mode == ModeSelection && selection.mode == SelectionNormal) { // begin selection transform controls
+	if !(app.Mode == ModeSelection && selection.mode == SelectionNormal || selection.mode == SelectionSingleTextBox) { // begin selection transform controls
 		raygui.Disable()
 	}
 	bounds.X += 50
@@ -165,6 +173,13 @@ func (tb *guiTopbar) updateAndDraw() (action Action) {
 		log.Debug("topbar drag clicked")
 		action = app.doDrag()
 	}
+
+	bounds.X += 50
+	raygui.SetTooltip("Delete (X / Del)")
+	if raygui.Button(bounds, raygui.IconText(raygui.ICON_BIN, "")) {
+		log.Debug("topbar delete clicked")
+		action = app.doDelete()
+	}
 	raygui.Enable() // end selection transform controls
 
 	// Reset style and tooltip
@@ -176,6 +191,8 @@ func (tb *guiTopbar) updateAndDraw() (action Action) {
 
 // guiSidebar represents the sidebar of the application
 type guiSidebar struct {
+	// Active text box index
+	activeTextBox int32
 	// Active path index
 	activePath int32
 	// Active category index
@@ -238,26 +255,47 @@ func (sb *guiSidebar) init() {
 		log.Trace("gui.sidebar", "i", i, "buildingIndices[i]", cat_idxs)
 		log.Trace("gui.sidebar", "i", i, "buildingTexts[i]", sb.buildingTexts[i])
 	}
+	sb.activeTextBox = -1
 	sb.activePath = -1
 	sb.activeCategory = -1
 	sb.activeBuilding = -1
 	gui.traceState()
 }
 
-func (sb *guiSidebar) drawLine(dims rl.Rectangle, yOffset float32) {
-	start := vec2(dims.X, dims.Y+yOffset)
-	end := vec2(dims.X+dims.Width, dims.Y+yOffset)
+func (sb *guiSidebar) drawLine(bounds rl.Rectangle, yOffset float32) {
+	start := vec2(bounds.X, bounds.Y+yOffset)
+	end := vec2(bounds.X+bounds.Width, bounds.Y+yOffset)
 	rl.DrawLineEx(start, end, 2, colors.Gray300)
 }
 
-func (sb *guiSidebar) drawPathsControls(dims rl.Rectangle, yOffset float32) Action {
-	bounds := rl.NewRectangle(dims.X, dims.Y+yOffset, dims.Width/float32(sb.numPath), 40)
+func (sb *guiSidebar) drawTextBoxControls(bounds rl.Rectangle, yOffset float32) Action {
+	bounds = rl.NewRectangle(bounds.X, bounds.Y+yOffset, bounds.Width, 40)
+	newActive := raygui.ToggleGroup(bounds, "Text box", int32(sb.activeTextBox))
+	if newActive != sb.activeTextBox {
+		// newActive is guaranteed to be != -1 because ToggleGroup returns the index of the newly
+		// active toggle (after a click) and we cannot goes from an active one (sb.activeTextBox != 1)
+		// to an inactive one (newActive == -1) by clicking on the same toggle
+		sb.activeTextBox = newActive
+		sb.activePath = -1
+		sb.activeCategory = -1
+		sb.activeBuilding = -1
+		log.Debug("sidebar text box clicked", "index", newActive)
+		gui.traceState()
+		// newActive matches with actual index in [pathDefs]
+		return newTextBox.doInit()
+	}
+	return nil
+}
+
+func (sb *guiSidebar) drawPathsControls(bounds rl.Rectangle, yOffset float32) Action {
+	bounds = rl.NewRectangle(bounds.X, bounds.Y+yOffset, (bounds.Width-10)/float32(sb.numPath), 40)
 	newActive := raygui.ToggleGroup(bounds, sb.pathText, int32(sb.activePath))
 	if newActive != sb.activePath {
 		// newActive is guaranteed to be != -1 because ToggleGroup returns the index of the newly
 		// active toggle (after a click) and we cannot goes from an active one (sb.activePath != 1)
 		// to an inactive one (newActive == -1) by clicking on the same toggle
 		sb.activePath = newActive
+		sb.activeTextBox = -1
 		sb.activeCategory = -1
 		sb.activeBuilding = -1
 		log.Debug("sidebar path clicked", "defIdx", newActive)
@@ -268,14 +306,15 @@ func (sb *guiSidebar) drawPathsControls(dims rl.Rectangle, yOffset float32) Acti
 	return nil
 }
 
-func (sb *guiSidebar) drawCategoryControls(dims rl.Rectangle, yOffset float32) Action {
-	bounds := rl.NewRectangle(dims.X, dims.Y+yOffset, dims.Width, 40)
+func (sb *guiSidebar) drawCategoryControls(bounds rl.Rectangle, yOffset float32) Action {
+	bounds = rl.NewRectangle(bounds.X, bounds.Y+yOffset, bounds.Width, 40)
 	newActive := raygui.ToggleGroup(bounds, sb.categoryText, sb.activeCategory)
 	if newActive != sb.activeCategory {
 		// newActive is guaranteed to be != -1 because ToggleGroup returns the index of the newly
 		// active toggle (after a click) and we cannot goes from an active one (sb.activeCategory != 1)
 		// to an inactive one (newActive == -1) by clicking on the same toggle
 		sb.activeCategory = newActive
+		sb.activeTextBox = -1
 		sb.activePath = -1
 		sb.activeBuilding = -1
 		log.Debug("sidebar category clicked", "catIdx", sb.activeCategory)
@@ -285,14 +324,15 @@ func (sb *guiSidebar) drawCategoryControls(dims rl.Rectangle, yOffset float32) A
 	return nil
 }
 
-func (sb *guiSidebar) drawBuildingControls(dims rl.Rectangle, yOffset float32) Action {
-	bounds := rl.NewRectangle(dims.X, dims.Y+yOffset, dims.Width, 40)
+func (sb *guiSidebar) drawBuildingControls(bounds rl.Rectangle, yOffset float32) Action {
+	bounds = rl.NewRectangle(bounds.X, bounds.Y+yOffset, bounds.Width, 40)
 	newActive := raygui.ToggleGroup(bounds, sb.buildingTexts[sb.activeCategory], sb.activeBuilding)
 	if newActive != sb.activeBuilding {
 		// newActive is guaranteed to be != -1 because ToggleGroup returns the index of the newly
 		// active toggle (after a click) and we cannot goes from an active one (sb.activeBuilding != 1)
 		// to an inactive one (newActive == -1) by clicking on the same toggle
 		sb.activeBuilding = newActive
+		sb.activeTextBox = -1
 		sb.activePath = -1
 		defIdx := sb.buildingIndices[sb.activeCategory][newActive]
 		log.Debug("sidebar building clicked", "defIdx", defIdx)
@@ -303,10 +343,10 @@ func (sb *guiSidebar) drawBuildingControls(dims rl.Rectangle, yOffset float32) A
 }
 
 func (sb *guiSidebar) updateAndDraw() (action Action) {
-	dims := rl.NewRectangle(0, TopbarHeight, SidebarWidth, dims.Screen.Y-TopbarHeight-StatusBarHeight)
+	bar := rl.NewRectangle(0, TopbarHeight, SidebarWidth, dims.Screen.Y-TopbarHeight-StatusBarHeight)
 
-	rl.DrawRectangleRec(dims, colors.Gray100)
-	rl.DrawLineV(dims.TopRight(), dims.BottomRight(), colors.Gray300)
+	rl.DrawRectangleRec(bar, colors.Gray100)
+	rl.DrawLineV(bar.TopRight(), bar.BottomRight(), colors.Gray300)
 
 	padding := float32(10)
 
@@ -316,23 +356,26 @@ func (sb *guiSidebar) updateAndDraw() (action Action) {
 	raygui.SetStyle(raygui.DEFAULT, raygui.TEXT_SIZE, 32)
 
 	// padded dimensions
-	pdims := rl.NewRectangle(dims.X+20, dims.Y+20, dims.Width-40, dims.Height-40)
+	bar = rl.NewRectangle(bar.X+20, bar.Y+20, bar.Width-40, bar.Height-40)
 
 	yOffset := float32(0)
-	action = orAction(action, sb.drawPathsControls(pdims, yOffset))
+	action = orAction(action, sb.drawTextBoxControls(bar, yOffset))
 	yOffset += 60
 
-	sb.drawLine(pdims, yOffset)
+	action = orAction(action, sb.drawPathsControls(bar, yOffset))
+	yOffset += 60
+
+	sb.drawLine(bar, yOffset)
 	yOffset += 20
 
-	action = orAction(action, sb.drawCategoryControls(pdims, yOffset))
+	action = orAction(action, sb.drawCategoryControls(bar, yOffset))
 	yOffset += float32(sb.numCategory) * 50
 
 	if sb.activeCategory > -1 {
-		sb.drawLine(pdims, yOffset)
+		sb.drawLine(bar, yOffset)
 		yOffset += 10
 
-		action = orAction(action, sb.drawBuildingControls(pdims, yOffset))
+		action = orAction(action, sb.drawBuildingControls(bar, yOffset))
 	}
 
 	raygui.SetStyle(raygui.TOGGLE, raygui.GROUP_PADDING, pPadding)
@@ -340,22 +383,101 @@ func (sb *guiSidebar) updateAndDraw() (action Action) {
 	return action
 }
 
+type guiDetailsbar struct {
+	areaInit bool
+	textarea text.Area
+}
+
+func textAreaOpts() text.AreaOptions {
+	return text.AreaOptions{Font: monoFont, Size: 24, Color: colors.Gray700}
+}
+
+func (db *guiDetailsbar) reset() {
+	db.areaInit = false
+	db.textarea = text.NewArea(rl.Rectangle{}, "", textAreaOpts())
+}
+
+func (db *guiDetailsbar) doUpdateTextBoxContent() Action {
+	if newText := db.textarea.Text(); newText != scene.TextBoxes[selection.TextBoxIdxs[0]].Content {
+		tb := scene.TextBoxes[selection.TextBoxIdxs[0]]
+		tb.Content = newText
+		db.textarea.SetFocused(false)
+		scene.ModifyObjects(selection.ObjectSelection, ObjectCollection{TextBoxes: []TextBox{tb}})
+	}
+	return nil
+}
+
+func (db *guiDetailsbar) updateAndDraw() Action {
+	var action Action
+	bar := rl.NewRectangle(
+		dims.Screen.X-DetailsBarWidth,
+		TopbarHeight,
+		SidebarWidth,
+		dims.Screen.Y-TopbarHeight-StatusBarHeight)
+
+	rl.DrawRectangleRec(bar, colors.Gray100)
+	rl.DrawLineV(bar.TopLeft(), bar.TopRight(), colors.Gray300)
+
+	// padded dimensions
+	bar = rl.NewRectangle(bar.X+20, bar.Y+20, bar.Width-40, bar.Height-40)
+
+	// db.textarea.SetBounds(bounds)
+	// db.textarea.Draw(keyboard.Pressed)
+	if app.Mode == ModeSelection && len(selection.TextBoxIdxs) == 1 && len(selection.BuildingIdxs) == 0 && len(selection.PathIdxs) == 0 {
+		titleBounds := bar
+		titleBounds.Height = 30
+		text.DrawText(titleBounds, "Edit text box content", text.Options{Font: font, Size: 24, Color: colors.Gray700})
+		raygui.SetStyle(raygui.DEFAULT, raygui.TEXT_SIZE, 24)
+
+		areaBounds := bar
+		areaBounds.Y += 40
+		areaBounds.Height = bar.Height - areaBounds.Y - 50
+
+		if !db.areaInit {
+			db.textarea = text.NewArea(areaBounds, scene.TextBoxes[selection.TextBoxIdxs[0]].Content, textAreaOpts())
+			db.areaInit = true
+		} else {
+			// in case of window resize
+			db.textarea.SetBounds(areaBounds)
+		}
+		db.textarea.SetDisabled(selection.mode != SelectionSingleTextBox)
+		db.textarea.Draw(keyboard.Pressed)
+
+		if keyboard.Pressed == rl.KeyEnter && keyboard.Ctrl {
+			action = db.doUpdateTextBoxContent()
+		}
+		buttonBounds := bar
+		buttonBounds.Y = areaBounds.Y + areaBounds.Height + 10
+		buttonBounds.Height = 30
+		if selection.mode != SelectionSingleTextBox {
+			raygui.Disable()
+		}
+		if raygui.Button(buttonBounds, "Update (Ctrl+Enter)") {
+			action = db.doUpdateTextBoxContent()
+		}
+		raygui.Enable()
+	} else {
+		db.reset()
+	}
+	return action
+}
+
 type guiStatusbar struct{}
 
 func (sb *guiStatusbar) updateAndDraw() Action {
-	dims := rl.NewRectangle(0, dims.Screen.Y-StatusBarHeight, dims.Screen.X, StatusBarHeight)
-	rl.DrawRectangleRec(dims, colors.Gray100)
-	rl.DrawLineV(dims.TopLeft(), dims.TopRight(), colors.Gray300)
+	bar := rl.NewRectangle(0, dims.Screen.Y-StatusBarHeight, dims.Screen.X, StatusBarHeight)
+	rl.DrawRectangleRec(bar, colors.Gray100)
+	rl.DrawLineV(bar.TopLeft(), bar.TopRight(), colors.Gray300)
 
 	// left aligned text
-	lpos := dims.TopLeft().Add(vec2(5, 5))
+	lpos := bar.TopLeft().Add(vec2(5, 5))
 	ltext := fmt.Sprintf("FPS=% 3d | %12v | Building Draws=%d | Path Draws=%d", int(rl.GetFPS()), app.Mode, app.drawCounts.Buildings, app.drawCounts.Paths)
 	rl.DrawTextEx(font, ltext, lpos, 24, 1, colors.Gray700)
 
 	// right aligned text
 	rtext := fmt.Sprintf("X:%5d  Y:%5d", int(mouse.SnappedPos.X), int(mouse.SnappedPos.Y))
 	width := rl.MeasureTextEx(font, rtext, 24, 1).X
-	rpos := dims.TopRight().Add(vec2(-5-width, 5))
+	rpos := bar.TopRight().Add(vec2(-5-width, 5))
 	rl.DrawTextEx(font, rtext, rpos, 24, 1, colors.Gray700)
 
 	return nil

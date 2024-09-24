@@ -79,6 +79,87 @@ func (kb *Keyboard) Update() {
 	}
 }
 
+// Binding returns the key binding that matches the pressed key and modifiers
+//
+// If gui is capturing key presses, always returns [BindingNull]
+func (kb Keyboard) Binding() KeyBinding {
+	if gui.CapturesKeyPress() {
+		return BindingNull
+	}
+	for i, pair := range keyBindings {
+		if pair[0].Matches(kb.Pressed, kb.Ctrl, kb.Alt, kb.Shift) || pair[1].Matches(kb.Pressed, kb.Ctrl, kb.Alt, kb.Shift) {
+			return KeyBinding(i)
+		}
+	}
+	return BindingNull
+}
+
+type optBool uint8
+
+const (
+	Any optBool = iota
+	No          // false
+	Yes         // true
+)
+
+// keyBindingDef associates a key pressed (and modifiers) to a [keyBinding]
+type keyBindingDef struct {
+	code             int32
+	ctrl, alt, shift optBool
+}
+
+func (kbd keyBindingDef) Matches(key int32, ctrl, alt, shift bool) bool {
+	return kbd.code != rl.KeyNull && kbd.code == key &&
+		(kbd.ctrl == Any || ctrl && kbd.ctrl == Yes || !ctrl && kbd.ctrl == No) &&
+		(kbd.alt == Any || alt && kbd.alt == Yes || !alt && kbd.alt == No) &&
+		(kbd.shift == Any || shift && kbd.shift == Yes || !shift && kbd.shift == No)
+}
+
+// KeyBinding represents a keyboard key binding
+type KeyBinding int
+
+const (
+	BindingNull KeyBinding = iota
+	BindingEscape
+	BindingSave
+	BindingSaveAs
+	BindingUndo
+	BindingRedo
+	BindingDelete
+	BindingDuplicate
+	BindingRotate
+	BindingDrag
+	BindingUp
+	BindingDown
+	BindingLeft
+	BindingRight
+	BindingZoomIn
+	BindingZoomOut
+	BindingZoomReset
+)
+
+// default key bindings
+var keyBindings = [...][2]keyBindingDef{
+	// defines as an array for performance and we are using the index syntax for readability and correctness
+	// this is not a map
+	BindingEscape:    {{code: rl.KeyEscape}},
+	BindingDelete:    {{code: rl.KeyDelete}, {code: rl.KeyX}},
+	BindingSave:      {{code: rl.KeyS, ctrl: Yes, shift: No}},
+	BindingSaveAs:    {{code: rl.KeyS, ctrl: Yes, shift: Yes}},
+	BindingUndo:      {{code: rl.KeyZ, ctrl: Yes, shift: No}},
+	BindingRedo:      {{code: rl.KeyY, ctrl: Yes}, {code: rl.KeyZ, ctrl: Yes, shift: Yes}},
+	BindingDuplicate: {{code: rl.KeyD}},
+	BindingRotate:    {{code: rl.KeyR}},
+	BindingDrag:      {{code: rl.KeyV}},
+	BindingUp:        {{code: rl.KeyUp}},
+	BindingDown:      {{code: rl.KeyDown}},
+	BindingLeft:      {{code: rl.KeyLeft}},
+	BindingRight:     {{code: rl.KeyRight}},
+	BindingZoomIn:    {{code: rl.KeyEqual, shift: Yes}, {code: rl.KeyKpAdd}},
+	BindingZoomOut:   {{code: rl.KeyMinus}, {code: rl.KeyKpSubtract}},
+	BindingZoomReset: {{code: rl.KeyEqual, shift: No}, {code: rl.KeyKp0}},
+}
+
 func GetKeyName(key int32) string {
 	switch key {
 	case rl.KeyLeftControl, rl.KeyRightControl:

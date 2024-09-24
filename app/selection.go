@@ -24,6 +24,8 @@ type Selection struct {
 	mode SelectionMode
 	// transformed selection data (in drag or duplicate mode)
 	transform selectionTransform
+	// update transform position on mouse down
+	transformMoveOnMouseDown bool
 }
 
 func (s Selection) traceState(key, val string) {
@@ -33,6 +35,7 @@ func (s Selection) traceState(key, val string) {
 		}
 		log.Trace("selection", "buildingIdxs", s.BuildingIdxs)
 		log.Trace("selection", "pathIdxs", s.PathIdxs)
+		log.Trace("selection", "textboxIdxs", s.TextBoxIdxs)
 		log.Trace("selection", "mode", s.mode, "bounds", s.Bounds)
 		s.transform.traceState()
 	}
@@ -42,6 +45,7 @@ func (s *Selection) Reset() {
 	log.Debug("selection.reset")
 	s.BuildingIdxs = s.BuildingIdxs[:0]
 	s.PathIdxs = s.PathIdxs[:0]
+	s.TextBoxIdxs = s.TextBoxIdxs[:0]
 	s.Bounds = rl.NewRectangle(0, 0, 0, 0)
 	s.mode = SelectionNormal
 	s.transform.reset()
@@ -57,20 +61,28 @@ type SelectionMode int
 const (
 	// Normal selection
 	SelectionNormal SelectionMode = iota
+	// A single text box is selected, allow text editing in details panel & text box resizing
+	SelectionSingleTextBox
 	// Selection is dragged
 	SelectionDrag
 	// Selection is being duplicated
 	SelectionDuplicate
+	// A single text box is being resized
+	SelectionTextBoxResize
 )
 
 func (m SelectionMode) String() string {
 	switch m {
 	case SelectionNormal:
 		return "SelectionNormal"
+	case SelectionSingleTextBox:
+		return "SelectionSingleTextBox"
 	case SelectionDrag:
 		return "SelectionDrag"
 	case SelectionDuplicate:
 		return "SelectionDuplicate"
+	case SelectionTextBoxResize:
+		return "SelectionTextBoxResize"
 	default:
 		return "Invalid"
 	}
@@ -114,6 +126,9 @@ func (st selectionTransform) traceState() {
 		for i, b := range st.Buildings {
 			log.Trace("selectionTransform.buildings", "i", i, "value", b, "invalid", st.invalidBuildings[i])
 		}
+		for i, tb := range st.TextBoxes {
+			log.Trace("selectionTransform.textboxes", "i", i, "value", tb)
+		}
 		log.Trace("selectionTransform", "isValid", st.isValid, "bounds", st.bounds)
 		log.Trace("selectionTransform", "rot", st.rot, "startPos", st.startPos, "endPos", st.endPos)
 	}
@@ -126,6 +141,7 @@ func (st *selectionTransform) reset() {
 
 	st.Paths = st.Paths[:0]
 	st.Buildings = st.Buildings[:0]
+	st.TextBoxes = st.TextBoxes[:0]
 	st.invalidPaths = st.invalidPaths[:0]
 	st.invalidBuildings = st.invalidBuildings[:0]
 	st.isValid = false
@@ -146,6 +162,16 @@ func (s selectionTransform) transformMatrix(baseBounds rl.Rectangle) matrix.Matr
 
 // recompute recomputes the transformed objects and whether they are valid
 func (st *selectionTransform) recompute(sel ObjectSelection, mode SelectionMode) {
+	if mode == SelectionTextBoxResize {
+		// endPos is the new bottom right corner
+		st.isValid = true
+		st.TextBoxes = st.TextBoxes[:0]
+		tb := scene.TextBoxes[sel.TextBoxIdxs[0]]
+		tb.Bounds = rl.NewRectangleCorners(tb.Bounds.TopLeft(), grid.Snap(st.endPos))
+		st.TextBoxes = append(st.TextBoxes, tb)
+		return
+	}
+
 	// fast path for identity transform
 	// TODO: not copying anything would be faster
 	if st.isIdentity() {
@@ -156,14 +182,16 @@ func (st *selectionTransform) recompute(sel ObjectSelection, mode SelectionMode)
 			st.invalidBuildings = Repeat(st.invalidBuildings, true, len(sel.BuildingIdxs))
 			st.Paths = CopyIdxs(st.Paths, scene.Paths, pathIdxs)
 			st.invalidPaths = Repeat(st.invalidPaths, true, len(pathIdxs))
+			st.TextBoxes = CopyIdxs(st.TextBoxes, scene.TextBoxes, sel.TextBoxIdxs)
 			st.isValid = false
 			st.bounds = sel.Bounds
-		case SelectionDrag, SelectionNormal:
+		default:
 			pathIdxs := sel.AnyPathIdxs()
 			st.Buildings = CopyIdxs(st.Buildings, scene.Buildings, sel.BuildingIdxs)
 			st.invalidBuildings = Repeat(st.invalidBuildings, false, len(sel.BuildingIdxs))
 			st.Paths = CopyIdxs(st.Paths, scene.Paths, pathIdxs)
 			st.invalidPaths = Repeat(st.invalidPaths, false, len(pathIdxs))
+			st.TextBoxes = CopyIdxs(st.TextBoxes, scene.TextBoxes, sel.TextBoxIdxs)
 			st.isValid = true
 			st.bounds = sel.Bounds
 		}
@@ -182,15 +210,17 @@ func (st *selectionTransform) recompute(sel ObjectSelection, mode SelectionMode)
 		pathIdxs = sel.AnyPathIdxs()
 	}
 
+	ntb := len(sel.TextBoxIdxs)
 	nb := len(sel.BuildingIdxs)
 	np := len(pathIdxs)
 
 	// clears slices
+	st._buildingBounds = slices.Grow(st._buildingBounds[:0], nb)
 	st.Buildings = slices.Grow(st.Buildings[:0], nb)
 	st.invalidBuildings = slices.Grow(st.invalidBuildings[:0], nb)
 	st.Paths = slices.Grow(st.Paths[:0], np)
 	st.invalidPaths = slices.Grow(st.invalidPaths[:0], np)
-	st._buildingBounds = slices.Grow(st._buildingBounds[:0], nb)
+	st.TextBoxes = slices.Grow(st.TextBoxes[:0], ntb)
 
 	mat := st.transformMatrix(sel.Bounds)
 	st.bounds = mat.ApplyRecRec(sel.Bounds)
@@ -201,6 +231,15 @@ func (st *selectionTransform) recompute(sel ObjectSelection, mode SelectionMode)
 		b.Pos = mat.ApplyV(b.Pos)
 		b.Rot = (b.Rot + st.rot) % 360
 		st.Buildings = append(st.Buildings, b)
+	}
+
+	// TextBoxes
+	for _, idx := range sel.TextBoxIdxs {
+		tb := scene.TextBoxes[idx]
+		pos := mat.ApplyV(tb.Bounds.Position())
+		tb.Bounds.X = pos.X
+		tb.Bounds.Y = pos.Y
+		st.TextBoxes = append(st.TextBoxes, tb)
 	}
 
 	// Paths & invalidPaths
@@ -246,6 +285,7 @@ func (st *selectionTransform) recompute(sel ObjectSelection, mode SelectionMode)
 	isSelectedIt := NewMaskIterator(sel.BuildingIdxs)
 	for _, sb := range scene.Buildings {
 		sb := sb.Bounds()
+		// TODO: use st.Buildings bounds only in the skip condition ?
 		if mode != SelectionDuplicate && isSelectedIt.Next() || !st.bounds.CheckCollisionRec(sb) {
 			// skip:
 			//   - scene building in selection (except when duplicating)
@@ -274,24 +314,27 @@ func (st *selectionTransform) recompute(sel ObjectSelection, mode SelectionMode)
 func (s *Selection) GetAction() Action {
 	app.Mode.Assert(ModeSelection)
 	switch s.mode {
-	case SelectionNormal:
-		switch keyboard.Pressed {
-		case rl.KeyEscape:
+	case SelectionNormal, SelectionSingleTextBox:
+		switch keyboard.Binding() {
+		case BindingEscape:
 			return app.doSwitchMode(ModeNormal, ResetAll())
-		case rl.KeyD:
+		case BindingDuplicate:
 			// Duplicate use center of current selection as start position
-			return s.doBeginTransformation(SelectionDuplicate, s.Bounds.Center())
-		case rl.KeyDelete, rl.KeyX:
+			return s.doBeginTransformation(SelectionDuplicate, s.Bounds.Center(), false)
+		case BindingDrag:
+			return s.doBeginTransformation(SelectionDrag, s.Bounds.Center(), false)
+		case BindingDelete:
 			return s.doDelete()
-		case rl.KeyR:
+		case BindingRotate:
 			return s.doRotate()
-		case rl.KeyLeft:
+
+		case BindingLeft:
 			return s.doMoveBy(vec2(-1, 0))
-		case rl.KeyRight:
+		case BindingRight:
 			return s.doMoveBy(vec2(+1, 0))
-		case rl.KeyUp:
+		case BindingUp:
 			return s.doMoveBy(vec2(0, -1))
-		case rl.KeyDown:
+		case BindingDown:
 			return s.doMoveBy(vec2(0, +1))
 		}
 		if mouse.Left.Pressed && mouse.InScene {
@@ -299,45 +342,59 @@ func (s *Selection) GetAction() Action {
 			case scene.Hovered.IsEmpty():
 				return selector.doInit(mouse.Pos)
 			case selection.Contains(scene.Hovered):
+				if s.mode == SelectionSingleTextBox && scene.TextBoxes[s.TextBoxIdxs[0]].HandleRect().CheckCollisionPoint(mouse.Pos) {
+					return s.doBeginTransformation(SelectionTextBoxResize, mouse.Pos, true)
+				}
 				// Drag use mouse position as start position
-				return s.doBeginTransformation(SelectionDrag, mouse.Pos)
+				return s.doBeginTransformation(SelectionDrag, mouse.Pos, true)
 			default:
-				return s.doInitSingle(scene.Hovered, SelectionDrag, mouse.Pos)
+				return s.doInitSingleDrag(scene.Hovered, mouse.Pos)
 			}
 		}
-	case SelectionDuplicate:
+	case SelectionDuplicate, SelectionDrag, SelectionTextBoxResize:
 		// TODO: Implement arrow keys nudging ?
-		switch keyboard.Pressed {
-		case rl.KeyEscape:
+		switch keyboard.Binding() {
+		case BindingEscape:
 			return s.doEndTransformation(true)
-		case rl.KeyR:
+		case BindingRotate:
 			return s.doRotate()
 		}
-		if mouse.Left.Released {
+		switch {
+		case mouse.Left.Released:
 			return s.doEndTransformation(false)
-		}
-		if mouse.InScene && !mouse.Left.Down {
+		case mouse.InScene && (s.transformMoveOnMouseDown || !mouse.Left.Down):
 			return s.doMoveTo(mouse.Pos)
 		}
-	case SelectionDrag:
-		switch keyboard.Pressed {
-		case rl.KeyEscape:
-			return s.doEndTransformation(true)
-		case rl.KeyR:
-			return s.doRotate()
-		}
-		if mouse.Left.Released {
-			return s.doEndTransformation(false)
-		}
-		if mouse.InScene {
-			return s.doMoveTo(mouse.Pos)
-		}
+	default:
+		panic("invalid selection mode")
 	}
 	return nil
 }
 
-func (s *Selection) doInitSingle(obj Object, mode SelectionMode, dragPos rl.Vector2) Action {
-	log.Debug("selection.doInitSingle", "obj", obj, "mode", mode, "dragPos", dragPos)
+// reset [Selection.mode]
+//
+// - empty selection -> [ModeNormal]
+// - single text box -> [ModeSelection] in [SelectionSingleTextBox]
+// - other -> [ModeSelection] in [SelectionNormal]
+func (s *Selection) resetMode() (AppMode, Resets) {
+	if len(s.BuildingIdxs) == 0 && len(s.PathIdxs) == 0 {
+		if len(s.TextBoxIdxs) == 0 {
+			log.Debug("selection.resetMode", "appMode", ModeNormal)
+			return ModeNormal, ResetAll()
+		} else if len(s.TextBoxIdxs) == 1 {
+			log.Debug("selection.resetMode", "appMode", ModeSelection, "mode", SelectionSingleTextBox)
+			s.mode = SelectionSingleTextBox
+			return ModeSelection, ResetAll().WithSelection(false)
+		}
+	}
+	log.Debug("selection.resetMode", "appMode", ModeSelection, "mode", SelectionNormal)
+	s.mode = SelectionNormal
+	return ModeSelection, ResetAll().WithSelection(false)
+}
+
+// Initializes a new selection from a single object in [SelectionDrag] mode
+func (s *Selection) doInitSingleDrag(obj Object, pos rl.Vector2) Action {
+	log.Debug("selection.doInitSingleDrag", "obj", obj, "pos", pos)
 	s.Reset()
 
 	switch obj.Type {
@@ -353,76 +410,44 @@ func (s *Selection) doInitSingle(obj Object, mode SelectionMode, dragPos rl.Vect
 	case TypePathEnd:
 		s.PathIdxs = append(s.PathIdxs, PathSel{Idx: obj.Idx, End: true})
 		s.Bounds = rl.NewRectangleV(scene.Paths[obj.Idx].End, rl.Vector2{})
-
+	case TypeTextBox:
+		s.TextBoxIdxs = append(s.TextBoxIdxs, obj.Idx)
+		s.Bounds = scene.TextBoxes[obj.Idx].Bounds
 	default:
 		panic("invalid object type")
 	}
-	s.mode = mode
-	if mode == SelectionDrag {
-		s.transform.startPos = dragPos
-		s.transform.endPos = dragPos
-	} else {
-		center := s.Bounds.Center()
-		s.transform.startPos = center
-		s.transform.endPos = center
-	}
-	s.transform.recompute(s.ObjectSelection, mode) // noop transformation ->uses fast path
-
-	s.traceState("after", "doBeginTransformation")
-	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
-}
-
-// doInitSelection initializes a new selection from an [ObjectSelection], in [SelectionNormal] mode
-func (s *Selection) doInitSelection(sel ObjectSelection) Action {
-	log.Debug("selection.doInitSelection", "selected", sel)
-	s.Reset()
-
-	if sel.IsEmpty() {
-		s.traceState("after", "doInitSelection")
-		return app.doSwitchMode(ModeNormal, ResetAll())
-	}
-
-	s.BuildingIdxs = append(s.BuildingIdxs, sel.BuildingIdxs...)
-	s.PathIdxs = append(s.PathIdxs, sel.PathIdxs...)
-	s.Bounds = sel.Bounds
-	s.mode = SelectionNormal
-	s.transform.startPos = s.Bounds.Center()
-	s.transform.endPos = s.Bounds.Center()
-	s.transform.recompute(s.ObjectSelection, s.mode) // noop transformation ->uses fast path
-
-	s.traceState("after", "doInitSelection")
-	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
-}
-
-func (s *Selection) doInitRectangle(rect rl.Rectangle, mode SelectionMode, dragPos rl.Vector2) Action {
-	log.Debug("selection.doInitRectangle", "rect", rect, "mode", mode, "dragPos", dragPos)
-	s.Reset()
-	scene.SelectFromRect(&s.ObjectSelection, rect)
-
-	if s.IsEmpty() {
-		s.traceState("after", "doInitRectangle")
-		return app.doSwitchMode(ModeNormal, ResetAll())
-	}
-	s.mode = mode
-	if mode == SelectionDrag {
-		s.transform.startPos = dragPos
-		s.transform.endPos = dragPos
-	} else {
-		center := s.Bounds.Center()
-		s.transform.startPos = center
-		s.transform.endPos = center
-	}
-	s.transform.recompute(s.ObjectSelection, mode) // noop transformation -> uses fast path
+	s.mode = SelectionDrag
+	s.transformMoveOnMouseDown = true
+	s.transform.startPos = pos
+	s.transform.endPos = pos
+	s.transform.recompute(s.ObjectSelection, SelectionDrag) // noop transformation ->uses fast path
 
 	s.traceState("after", "doInitSingle")
 	return app.doSwitchMode(ModeSelection, ResetAll().WithSelection(false))
+}
+
+// doInitSelection initializes a new selection from an [ObjectSelection]
+//
+// - empty selection -> [ModeNormal]
+// - single text box -> [ModeSelection] in [SelectionSingleTextBox]
+// - other -> [ModeSelection] in [SelectionNormal]
+func (s *Selection) doInitSelection(sel ObjectSelection) Action {
+	log.Debug("selection.doInitSelection", "selected", sel)
+	sel.copy(&s.ObjectSelection)
+	s.transform.reset()
+	s.transform.startPos = s.Bounds.Center()
+	s.transform.endPos = s.Bounds.Center()
+	appMode, resets := s.resetMode()
+	s.traceState("after", "doInitSelection")
+	return app.doSwitchMode(appMode, resets)
 }
 
 func (s *Selection) doDelete() Action {
 	s.traceState("before", "doDelete")
 	log.Debug("selection.doDelete")
 	app.Mode.Assert(ModeSelection)
-	assert(s.mode == SelectionNormal, "cannot delete selection in "+s.mode.String())
+
+	assert(s.mode == SelectionNormal || s.mode == SelectionSingleTextBox, "cannot delete selection in "+s.mode.String())
 
 	scene.DeleteObjects(s.ObjectSelection)
 
@@ -430,13 +455,17 @@ func (s *Selection) doDelete() Action {
 	return app.doSwitchMode(ModeNormal, ResetAll())
 }
 
-func (s *Selection) doBeginTransformation(mode SelectionMode, pos rl.Vector2) Action {
+func (s *Selection) doBeginTransformation(mode SelectionMode, pos rl.Vector2, moveOnMouseDown bool) Action {
 	s.traceState("before", "doBeginTransformation")
 	log.Debug("selection.doBeginTransformation", "mode", mode, "pos", pos)
 	app.Mode.Assert(ModeSelection)
 
+	assert(mode == SelectionDrag || mode == SelectionDuplicate || mode == SelectionTextBoxResize, "invalid selection transform mode")
+
+	s.transformMoveOnMouseDown = moveOnMouseDown
+
 	// special cases for only path start/end selected for duplicate
-	if mode == SelectionDuplicate && len(s.BuildingIdxs) == 0 {
+	if mode == SelectionDuplicate && len(s.BuildingIdxs) == 0 && len(s.TextBoxIdxs) == 0 {
 		noFullPath := true
 		for _, elt := range s.PathIdxs {
 			if elt.Start && elt.End {
@@ -452,7 +481,7 @@ func (s *Selection) doBeginTransformation(mode SelectionMode, pos rl.Vector2) Ac
 			} else {
 				// TODO: would be nice to have a multi newpath mode
 				// for now do nothing
-				log.Debug("selection.doBeginTransformation", "action", "skipped", "mode", mode, "reason", "only path endings selected")
+				log.Debug("selection.doBeginTransformation", "action", "skiped", "mode", mode, "reason", "only path endings selected")
 				s.traceState("after", "doBeginTransformation")
 				return nil
 			}
@@ -475,7 +504,9 @@ func (s *Selection) doMoveBy(delta rl.Vector2) Action {
 	log.Debug("selection.doMoveBy", "delta", delta, "selection.mode", s.mode)
 	app.Mode.Assert(ModeSelection)
 
-	if s.mode == SelectionNormal {
+	switch s.mode {
+	case SelectionNormal, SelectionSingleTextBox:
+		// instantly move by
 		center := s.Bounds.Center()
 		s.transform.startPos = center
 		s.transform.endPos = center.Add(delta)
@@ -483,11 +514,12 @@ func (s *Selection) doMoveBy(delta rl.Vector2) Action {
 		s.transform.recompute(s.ObjectSelection, s.mode)
 		s.traceState("after", "doMoveBy")
 		return s.doEndTransformation(false)
+	default:
+		s.transform.endPos = s.transform.endPos.Add(delta)
+		s.transform.recompute(s.ObjectSelection, s.mode)
+		s.traceState("after", "doMoveBy")
+		return nil
 	}
-	s.transform.endPos = s.transform.endPos.Add(delta)
-
-	s.traceState("after", "doMoveBy")
-	return nil
 }
 
 func (s *Selection) doMoveTo(pos rl.Vector2) Action {
@@ -495,11 +527,22 @@ func (s *Selection) doMoveTo(pos rl.Vector2) Action {
 	log.Trace("selection.doMoveTo", "pos", pos) // moving by mouse -> tracing
 	app.Mode.Assert(ModeSelection)
 
-	s.transform.endPos = pos
-	s.transform.recompute(s.ObjectSelection, s.mode)
-
-	s.traceState("after", "doMoveTo")
-	return nil
+	switch s.mode {
+	case SelectionNormal, SelectionSingleTextBox:
+		// instantly move to
+		center := s.Bounds.Center()
+		s.transform.startPos = center
+		s.transform.endPos = pos
+		s.transform.rot = 0
+		s.transform.recompute(s.ObjectSelection, s.mode)
+		s.traceState("after", "doMoveTo")
+		return s.doEndTransformation(false)
+	default:
+		s.transform.endPos = pos
+		s.transform.recompute(s.ObjectSelection, s.mode)
+		s.traceState("after", "doMoveTo")
+		return nil
+	}
 }
 
 func (s *Selection) doRotate() Action {
@@ -507,23 +550,27 @@ func (s *Selection) doRotate() Action {
 	log.Debug("selection.doRotate", "selection.mode", s.mode)
 	app.Mode.Assert(ModeSelection)
 
-	if s.mode == SelectionNormal {
-		// try rotate the selection
+	switch s.mode {
+	case SelectionSingleTextBox, SelectionTextBoxResize:
+		// no-op text boxes cannot be rotated
+		s.traceState("after", "doRotate")
+		return nil
+	case SelectionNormal:
+		// instantly rotate
 		center := s.Bounds.Center()
 		s.transform.startPos = center
 		s.transform.endPos = center
 		s.transform.rot = 90
 		s.transform.recompute(s.ObjectSelection, s.mode)
-		// will apply the rotation if it's valid and reset transformation in any case
 		s.traceState("after", "doRotate")
 		return s.doEndTransformation(false)
+	default:
+		s.transform.rot += 90
+		s.transform.recompute(s.ObjectSelection, s.mode)
+
+		s.traceState("after", "doRotate")
+		return nil
 	}
-
-	s.transform.rot += 90
-	s.transform.recompute(s.ObjectSelection, s.mode)
-
-	s.traceState("after", "doRotate")
-	return nil
 }
 
 func (s *Selection) doEndTransformation(discard bool) Action {
@@ -531,28 +578,23 @@ func (s *Selection) doEndTransformation(discard bool) Action {
 	log.Debug("selection.doEndTransformation", "discard", discard, "selection.mode", s.mode)
 	app.Mode.Assert(ModeSelection)
 
-	switch s.mode {
-
-	case SelectionNormal, SelectionDrag:
-		if !discard && !s.transform.isIdentity() && s.transform.isValid {
+	if !discard && s.transform.isValid && !s.transform.isIdentity() {
+		switch s.mode {
+		case SelectionDuplicate:
+			scene.AddObjects(s.transform.ObjectCollection)
+		default:
 			scene.ModifyObjects(s.ObjectSelection, s.transform.ObjectCollection)
 			s.Bounds = s.transform.bounds
 		}
-		// in any case, reset mode & transform
-		s.transform.reset()
-		s.mode = SelectionNormal
-
-	case SelectionDuplicate:
-		if discard {
-			// on discard -> reset mode & transform
-			s.transform.reset()
-			s.mode = SelectionNormal
-		} else if !s.transform.isIdentity() && s.transform.isValid {
-			// stays in [SelectionDuplicate] mode
-			scene.AddObjects(s.transform.ObjectCollection)
-		}
 	}
 
+	if discard || s.mode != SelectionDuplicate {
+		s.transform.reset()
+		appMode, resets := s.resetMode()
+		s.recomputeBounds(scene.ObjectCollection)
+		s.traceState("after", "doEndTransformation")
+		return app.doSwitchMode(appMode, resets)
+	}
 	s.traceState("after", "doEndTransformation")
 	return nil
 }
@@ -562,14 +604,12 @@ func (s *Selection) doEndTransformation(discard bool) Action {
 // See: [ActionHandler]
 func (s *Selection) Dispatch(action Action) Action {
 	switch action := action.(type) {
-	case SelectionActionInitSingle:
-		return s.doInitSingle(action.Object, action.Mode, action.DragPos)
-	case SelectionActionInitRectangle:
-		return s.doInitRectangle(action.Rect, action.Mode, action.DragPos)
+	case SelectionActionInitSingleDrag:
+		return s.doInitSingleDrag(action.Object, action.Pos)
 	case SelectionActionDelete:
 		return s.doDelete()
 	case SelectionActionBeginTransformation:
-		return s.doBeginTransformation(action.Mode, action.Pos)
+		return s.doBeginTransformation(action.Mode, action.Pos, action.MoveOnMouseDown)
 	case SelectionActionMoveTo:
 		return s.doMoveTo(action.Pos)
 	case SelectionActionRotate:
@@ -586,16 +626,23 @@ func (s *Selection) Dispatch(action Action) Action {
 // Draw
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// draws the transformed selection
-func (s *selectionTransform) draw(state DrawState) {
-	bounds := s.bounds
+const boundsThickness = 3.
+
+func drawSelectionBounds(bounds rl.Rectangle, isValid bool) {
 	px := 1 / camera.Zoom()
-	if s.isValid {
-		rl.DrawRectangleLinesEx(bounds, 3*px, colors.WithAlpha(colors.Blue500, 0.5))
+	dt := boundsThickness * px
+	bounds = rl.NewRectangleV(bounds.TopLeft().SubtractValue(dt), bounds.Size().AddValue(2*dt))
+	if isValid {
+		rl.DrawRectangleLinesEx(bounds, dt, colors.WithAlpha(colors.Blue500, 0.5))
 	} else {
-		rl.DrawRectangleLinesEx(bounds, 3*px, colors.WithAlpha(colors.Red500, 0.5))
+		rl.DrawRectangleLinesEx(bounds, dt, colors.WithAlpha(colors.Red500, 0.5))
 		rl.DrawRectangleRec(bounds, colors.WithAlpha(colors.Red500, 0.15))
 	}
+}
+
+// draws the transformed selection
+func (s *selectionTransform) draw(state DrawState) {
+	drawSelectionBounds(s.bounds, s.isValid)
 	for i, p := range s.Paths {
 		if s.invalidPaths[i] {
 			p.Draw(DrawInvalid)
@@ -610,172 +657,20 @@ func (s *selectionTransform) draw(state DrawState) {
 			b.Draw(state)
 		}
 	}
+	for _, tb := range s.TextBoxes {
+		tb.Draw(state, selection.mode == SelectionTextBoxResize)
+	}
 }
 
 // Draws the selection (and the transformed selection if any)
 func (s Selection) Draw() {
 	switch s.mode {
-	case SelectionNormal:
+	case SelectionNormal, SelectionSingleTextBox:
 		// only draw the selection rectangle, buildings and paths are drawn in [Scene.Draw]
-		px := 1 / camera.Zoom()
-		rl.DrawRectangleLinesEx(s.Bounds, 3*px, colors.WithAlpha(colors.Blue500, 0.5))
-	case SelectionDrag:
+		drawSelectionBounds(s.Bounds, true)
+	case SelectionDrag, SelectionTextBoxResize:
 		s.transform.draw(DrawClicked)
 	case SelectionDuplicate:
 		s.transform.draw(DrawNew)
-
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// Iterators
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// BuildingDrawStateIterator returns an iterator over the draw state of scene buildings
-func (s Selection) BuildingDrawStateIterator() buildingDrawStateIterator {
-	var state DrawState
-	switch s.mode {
-	case SelectionNormal:
-		state = DrawSkip // drawn later on top
-	case SelectionDrag:
-		state = DrawShadow
-	case SelectionDuplicate:
-		state = DrawClicked
-	default:
-		panic("invalid selection mode")
-	}
-	return buildingDrawStateIterator{
-		selectedIt: NewMaskIterator(s.BuildingIdxs),
-		state:      state,
-	}
-}
-
-// PathDrawStateIterator returns an iterator over the draw state of scene paths start, end and body
-func (s Selection) PathDrawStateIterator() pathDrawStateIterator {
-	var state DrawState
-	switch s.mode {
-	case SelectionNormal:
-		state = DrawSkip // drawn later on top
-	case SelectionDrag:
-		state = DrawShadow
-	case SelectionDuplicate:
-		state = DrawClicked
-	default:
-		panic("invalid selection mode")
-	}
-	return pathDrawStateIterator{
-		pathsIdxs: s.PathIdxs,
-		state:     state,
-		mode:      s.mode,
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// pathDrawStateIterator
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-type pathDrawStateIterator struct {
-	// selected paths
-	pathsIdxs []PathSel
-	// selection mode
-	mode SelectionMode
-	// state to return for selected path start/end/body
-	state DrawState
-	// Current scene path index to consider
-	idx int
-	// current index in pathsIdxs
-	i int
-}
-
-// Next returns the triplet of (start, end, body) draw state
-func (it *pathDrawStateIterator) Next() (DrawState, DrawState, DrawState) {
-	if it.i == len(it.pathsIdxs) {
-		// no more selection
-		it.idx++
-		return DrawNormal, DrawNormal, DrawNormal
-	}
-	if elt := it.pathsIdxs[it.i]; elt.Idx == it.idx {
-		// current path is in selection
-		it.i++ // advance to in selected paths
-		it.idx++
-		switch {
-		case it.mode == SelectionDrag || elt.Start && elt.End:
-			// when dragging we want to fully gray out the scene path
-			// regardless of wheter only start/end is selected
-			return it.state, it.state, it.state
-		case elt.Start:
-			return it.state, DrawNormal, DrawNormal
-		case elt.End:
-			return DrawNormal, it.state, DrawNormal
-		default:
-			panic("selection.pathIdx contains an empty path (neiher start nor end)")
-		}
-	} else {
-		// not selected, return normal state
-		it.idx++
-		return DrawNormal, DrawNormal, DrawNormal
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// buildingDrawStateIterator
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// buildingDrawStateIterator is a helper to get the next scene building draw state.
-type buildingDrawStateIterator struct {
-	selectedIt MaskIterator
-	// state to return for selected buildings/paths
-	state DrawState
-}
-
-func (it *buildingDrawStateIterator) Next() DrawState {
-	if it.selectedIt.Next() {
-		// it.selected.i is the index of the next selected building/path in selection
-		// we want the current
-		return it.state
-	} else {
-		// not selected, return normal state
-		return DrawNormal
-	}
-}
-
-////////////////////////////////////////////////////////////////////////////////////////////////////
-// MaskIterator
-////////////////////////////////////////////////////////////////////////////////////////////////////
-
-// Iterate over a would-be mask from the true values indices.
-type MaskIterator struct {
-	// index for which to return true
-	TrueIdxs []int
-	// current index counter
-	Idx int
-	// index of the next true value in [MaskIterator.TrueIdxs]
-	i int
-}
-
-// NewMaskIterator returns a new [MaskIterator] from the given true values indices.
-//
-// trueIdxs must be sorted in ascending order.
-func NewMaskIterator(trueIdx []int) MaskIterator {
-	return MaskIterator{TrueIdxs: trueIdx, Idx: 0, i: 0}
-}
-
-// Next returns the next value from the mask.
-//
-// It always returns false when all the true values have been iterated over, but keep incrementing
-// [MaskIterator.Idx] counter.
-func (it *MaskIterator) Next() bool {
-	if it.i == len(it.TrueIdxs) {
-		// no more selection
-		it.Idx++
-		return false
-	}
-	if it.Idx == it.TrueIdxs[it.i] {
-		it.i++ // advance to next true value
-		it.Idx++
-		return true
-	} else {
-		it.Idx++
-		return false
 	}
 }

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/bonoboris/satisfied/log"
@@ -43,6 +44,9 @@ func (s Scene) traceState(key, val string) {
 		}
 		for i, p := range s.Paths {
 			log.Trace("scene.paths", "i", i, "value", p)
+		}
+		for i, tb := range s.TextBoxes {
+			log.Trace("scene.textboxes", "i", i, "value", tb)
 		}
 		log.Trace("scene", "wasModified", s.wasModified, "historyPos", s.historyPos, "savedHistoryPos", s.savedHistoryPos)
 		for i, op := range s.history {
@@ -100,24 +104,35 @@ func (op sceneOp) do(s *Scene) {
 	switch op.Type {
 
 	case SceneOpAdd:
-		log.Debug("scene.operation.add", "action", "do", "num_paths", len(op.New.Paths), "num_buildings", len(op.New.Buildings))
+		log.Debug("scene.operation.add", "action", "do",
+			"num_paths", len(op.New.Paths),
+			"num_buildings", len(op.New.Buildings),
+			"num_textboxes", len(op.New.TextBoxes))
+
 		s.Paths = append(s.Paths, op.New.Paths...)
 		s.Buildings = append(s.Buildings, op.New.Buildings...)
+		s.TextBoxes = append(s.TextBoxes, op.New.TextBoxes...)
 
 	case SceneOpDelete:
 		pathIdxs := op.Sel.FullPathIdxs()
-		log.Debug("scene.operation.delete", "action", "do", "paths", pathIdxs, "buildinds", op.Sel.BuildingIdxs)
+		log.Debug("scene.operation.delete", "action", "do",
+			"paths", pathIdxs, "buildings", op.Sel.BuildingIdxs, "textboxes", op.Sel.TextBoxIdxs)
 		s.Paths = SwapDeleteMany(s.Paths, op.Sel.FullPathIdxs())
 		s.Buildings = SwapDeleteMany(s.Buildings, op.Sel.BuildingIdxs)
+		s.TextBoxes = SwapDeleteMany(s.TextBoxes, op.Sel.TextBoxIdxs)
 
 	case SceneOpModify:
 		pathIdxs := op.Sel.AnyPathIdxs()
-		log.Debug("scene.operation.modify", "action", "do", "paths", pathIdxs, "buildings", op.Sel.BuildingIdxs)
+		log.Debug("scene.operation.modify", "action", "do",
+			"paths", pathIdxs, "buildings", op.Sel.BuildingIdxs, "textboxes", op.Sel.TextBoxIdxs)
 		for i, idx := range pathIdxs {
 			s.Paths[idx] = op.New.Paths[i]
 		}
 		for i, idx := range op.Sel.BuildingIdxs {
 			s.Buildings[idx] = op.New.Buildings[i]
+		}
+		for i, idx := range op.Sel.TextBoxIdxs {
+			s.TextBoxes[idx] = op.New.TextBoxes[i]
 		}
 
 	default:
@@ -137,33 +152,44 @@ func (op sceneOp) redo(s *Scene) ObjectSelection {
 	switch op.Type {
 
 	case SceneOpAdd:
-		log.Debug("scene.operation.add", "action", "redo", "num_paths", len(op.New.Paths), "num_buildings", len(op.New.Buildings))
+		log.Debug("scene.operation.add", "action", "redo",
+			"num_paths", len(op.New.Paths),
+			"num_buildings", len(op.New.Buildings),
+			"num_textboxes", len(op.New.TextBoxes))
 		s.Paths = append(s.Paths, op.New.Paths...)
 		s.Buildings = append(s.Buildings, op.New.Buildings...)
+		s.TextBoxes = append(s.TextBoxes, op.New.TextBoxes...)
 
 		newSel = ObjectSelection{
 			BuildingIdxs: Range(len(s.Buildings)-len(op.New.Buildings), len(s.Buildings)),
+			TextBoxIdxs:  Range(len(s.TextBoxes)-len(op.New.TextBoxes), len(s.TextBoxes)),
 		}
 		n := len(s.Paths)
-		for i := range n - len(op.New.Paths) {
+		for i := range len(op.New.Paths) {
 			newSel.PathIdxs = append(newSel.PathIdxs, PathSel{Idx: n + i, Start: true, End: true})
 		}
 		newSel.recomputeBounds(s.ObjectCollection)
 
 	case SceneOpDelete:
 		pathIdxs := op.Sel.FullPathIdxs()
-		log.Debug("scene.operation.delete", "action", "redo", "paths", pathIdxs, "buildinds", op.Sel.BuildingIdxs)
+		log.Debug("scene.operation.delete", "action", "redo",
+			"paths", pathIdxs, "buildings", op.Sel.BuildingIdxs, "textboxes", op.Sel.TextBoxIdxs)
 		s.Paths = SwapDeleteMany(s.Paths, pathIdxs)
 		s.Buildings = SwapDeleteMany(s.Buildings, op.Sel.BuildingIdxs)
+		s.TextBoxes = SwapDeleteMany(s.TextBoxes, op.Sel.TextBoxIdxs)
 
 	case SceneOpModify:
 		pathIdxs := op.Sel.AnyPathIdxs()
-		log.Debug("scene.operation.modify", "action", "redo", "paths", pathIdxs, "buildings", op.Sel.BuildingIdxs)
+		log.Debug("scene.operation.modify", "action", "redo",
+			"paths", pathIdxs, "buildings", op.Sel.BuildingIdxs, "textboxes", op.Sel.TextBoxIdxs)
 		for i, idx := range pathIdxs {
 			s.Paths[idx] = op.New.Paths[i]
 		}
 		for i, idx := range op.Sel.BuildingIdxs {
 			s.Buildings[idx] = op.New.Buildings[i]
+		}
+		for i, idx := range op.Sel.TextBoxIdxs {
+			s.TextBoxes[idx] = op.New.TextBoxes[i]
 		}
 		newSel = op.Sel
 		newSel.recomputeBounds(s.ObjectCollection)
@@ -185,26 +211,36 @@ func (op sceneOp) undo(s *Scene) ObjectSelection {
 
 	switch op.Type {
 	case SceneOpAdd:
-		log.Debug("scene.operation.add", "action", "undo", "num_paths", len(op.New.Paths), "num_buildings", len(op.New.Buildings))
-		s.Paths = s.Paths[:len(s.Paths)-len(op.Old.Paths)]
-		s.Buildings = s.Buildings[:len(s.Buildings)-len(op.Old.Buildings)]
+		log.Debug("scene.operation.add", "action", "undo",
+			"num_paths", len(op.New.Paths),
+			"num_buildings", len(op.New.Buildings),
+			"num_textboxes", len(op.New.TextBoxes))
+		s.Paths = s.Paths[:len(s.Paths)-len(op.New.Paths)]
+		s.Buildings = s.Buildings[:len(s.Buildings)-len(op.New.Buildings)]
+		s.TextBoxes = s.TextBoxes[:len(s.TextBoxes)-len(op.New.TextBoxes)]
 
 	case SceneOpDelete:
 		pathIdxs := op.Sel.FullPathIdxs()
-		log.Debug("scene.operation.delete", "action", "undo", "paths", pathIdxs, "buildinds", op.Sel.BuildingIdxs)
+		log.Debug("scene.operation.delete", "action", "undo",
+			"paths", pathIdxs, "buildinds", op.Sel.BuildingIdxs, "textboxes", op.Sel.TextBoxIdxs)
 		s.Paths = SwapInsertMany(s.Paths, pathIdxs, op.Old.Paths)
 		s.Buildings = SwapInsertMany(s.Buildings, op.Sel.BuildingIdxs, op.Old.Buildings)
+		s.TextBoxes = SwapInsertMany(s.TextBoxes, op.Sel.TextBoxIdxs, op.Old.TextBoxes)
 
 		newSel = op.Sel
 
 	case SceneOpModify:
 		pathIdxs := op.Sel.AnyPathIdxs()
-		log.Debug("scene.operation.modify", "action", "redo", "paths", pathIdxs, "buildings", op.Sel.BuildingIdxs)
+		log.Debug("scene.operation.modify", "action", "redo",
+			"paths", pathIdxs, "buildings", op.Sel.BuildingIdxs, "textboxes", op.Sel.TextBoxIdxs)
 		for i, idx := range pathIdxs {
 			s.Paths[idx] = op.Old.Paths[i]
 		}
 		for i, idx := range op.Sel.BuildingIdxs {
 			s.Buildings[idx] = op.Old.Buildings[i]
+		}
+		for i, idx := range op.Sel.TextBoxIdxs {
+			s.TextBoxes[idx] = op.Old.TextBoxes[i]
 		}
 
 		newSel = op.Sel
@@ -244,6 +280,11 @@ func (s *Scene) AddBuilding(building Building) {
 	s.doSceneOp(sceneOp{Type: SceneOpAdd, New: ObjectCollection{Buildings: []Building{building}}})
 }
 
+// AddTextBox adds the given text box to the scene.
+func (s *Scene) AddTextBox(tb TextBox) {
+	s.doSceneOp(sceneOp{Type: SceneOpAdd, New: ObjectCollection{TextBoxes: []TextBox{tb}}})
+}
+
 // AddObjects adds the given paths and buildings to the scene.
 //
 // No validity checks is performed.
@@ -257,7 +298,7 @@ func (s *Scene) DeleteObjects(sel ObjectSelection) {
 	op := sceneOp{Type: SceneOpDelete, Sel: sel}
 	op.Old.Buildings = CopyIdxs(op.Old.Buildings, s.Buildings, sel.BuildingIdxs)
 	op.Old.Paths = CopyIdxs(op.Old.Paths, s.Paths, sel.FullPathIdxs())
-
+	op.Old.TextBoxes = CopyIdxs(op.Old.TextBoxes, s.TextBoxes, sel.TextBoxIdxs)
 	s.doSceneOp(op)
 }
 
@@ -269,6 +310,7 @@ func (s *Scene) ModifyObjects(sel ObjectSelection, new ObjectCollection) {
 	op := sceneOp{Type: SceneOpModify, Sel: sel, New: new.clone()}
 	op.Old.Buildings = CopyIdxs(op.Old.Buildings, s.Buildings, sel.BuildingIdxs)
 	op.Old.Paths = CopyIdxs(op.Old.Paths, s.Paths, sel.AnyPathIdxs())
+	op.Old.TextBoxes = CopyIdxs(op.Old.TextBoxes, s.TextBoxes, sel.TextBoxIdxs)
 	s.doSceneOp(op)
 }
 
@@ -326,8 +368,10 @@ func (s *Scene) ResetModified() {
 // If multiple objects are at the position returns first one on this list:
 //   - selected path with highest index: start / end over body
 //   - selected building with highest index
+//   - selected text box with highest index
 //   - normal path with highest index: start / end over body
 //   - normal building with highest index
+//   - normal text box with highest index
 //
 // This is (mostly) the reverse of [Scene.Draw] order to make viewing/selecting masked objects easier.
 //
@@ -352,6 +396,11 @@ func (s Scene) GetObjectAt(pos rl.Vector2) Object {
 			return Object{Type: TypeBuilding, Idx: selection.BuildingIdxs[i]}
 		}
 	}
+	for i := len(selection.TextBoxIdxs) - 1; i >= 0; i-- {
+		if s.TextBoxes[selection.TextBoxIdxs[i]].Bounds.CheckCollisionPoint(pos) {
+			return Object{Type: TypeTextBox, Idx: selection.TextBoxIdxs[i]}
+		}
+	}
 
 	// TODO: do not check selected paths / buildings again ?
 	for i := len(s.Paths) - 1; i >= 0; i-- {
@@ -372,6 +421,13 @@ func (s Scene) GetObjectAt(pos rl.Vector2) Object {
 			return Object{Type: TypeBuilding, Idx: i}
 		}
 	}
+
+	for i := len(s.TextBoxes) - 1; i >= 0; i-- {
+		if s.TextBoxes[i].Bounds.CheckCollisionPoint(pos) {
+			return Object{Type: TypeTextBox, Idx: i}
+		}
+	}
+
 	return Object{}
 }
 
@@ -380,10 +436,10 @@ func (s *Scene) Update() (action Action) {
 	s.Hovered = s.GetObjectAt(mouse.Pos)
 
 	if app.isNormal() && keyboard.Ctrl {
-		switch keyboard.Pressed {
-		case rl.KeyZ:
+		switch keyboard.Binding() {
+		case BindingUndo:
 			_, action = s.Undo()
-		case rl.KeyY:
+		case BindingRedo:
 			_, action = s.Redo()
 		}
 	}
@@ -407,20 +463,115 @@ func (s Scene) IsPathValid(path Path) bool {
 	return !path.Start.Equals(path.End)
 }
 
+// draws the scene objects accounting for selection / selector
+func (s Scene) drawWithSel() {
+	var state DrawState
+	var buildingIt MaskIterator
+	var pathIt PathSelMaskIterator
+	var textBoxIt MaskIterator
+	if app.Mode == ModeSelection {
+		buildingIt = selection.BuildingsIterator()
+		pathIt = selection.PathsIterator()
+		textBoxIt = selection.TextBoxesIterator()
+		switch selection.mode {
+		case SelectionNormal, SelectionSingleTextBox:
+			state = DrawSkip
+		case SelectionDrag, SelectionTextBoxResize:
+			state = DrawShadow
+		case SelectionDuplicate:
+			state = DrawClicked
+		}
+	} else {
+		buildingIt = selector.BuildingsIterator()
+		pathIt = selector.PathsIterator()
+		textBoxIt = selector.TextBoxesIterator()
+		state = DrawSkip
+	}
+
+	if app.Mode == ModeSelection && selection.mode == SelectionDrag {
+		// in drag mode, draw the whole path as shadow
+		for _, p := range s.Paths {
+			start, end := pathIt.Next()
+			if start || end {
+				p.Draw(state)
+			} else {
+				p.Draw(DrawNormal)
+			}
+		}
+	} else {
+		for _, b := range s.Paths {
+			start, end := pathIt.Next()
+			if start {
+				b.DrawStart(state)
+			} else {
+				b.DrawStart(DrawNormal)
+			}
+			if end {
+				b.DrawEnd(state)
+			} else {
+				b.DrawEnd(DrawNormal)
+			}
+			if start && end {
+				b.DrawBody(state)
+			} else {
+				b.DrawBody(DrawNormal)
+			}
+		}
+	}
+	for _, b := range s.Buildings {
+		if buildingIt.Next() {
+			b.Draw(state)
+		} else {
+			b.Draw(DrawNormal)
+		}
+	}
+	for _, b := range s.TextBoxes {
+		if textBoxIt.Next() {
+			b.Draw(state, false)
+		} else {
+			b.Draw(DrawNormal, false)
+		}
+	}
+}
+
+// draws selection / selector objects that have been skipped in [Scene.drawWithSel]
+func (s Scene) drawSelSkipped() {
+	var sel ObjectSelection
+	var state DrawState
+	if app.Mode == ModeSelection {
+		sel = selection.ObjectSelection
+		state = DrawSelected
+	} else {
+		sel = selector.ObjectSelection
+		state = DrawHovered
+	}
+
+	for _, idx := range sel.BuildingIdxs {
+		s.Buildings[idx].Draw(state)
+	}
+
+	for _, elt := range sel.PathIdxs {
+		p := s.Paths[elt.Idx]
+		if elt.Start && elt.End {
+			p.DrawBody(state)
+		}
+		if elt.Start {
+			p.DrawStart(state)
+		}
+		if elt.End {
+			p.DrawEnd(state)
+		}
+	}
+
+	for _, idx := range sel.TextBoxIdxs {
+		s.TextBoxes[idx].Draw(state, selection.mode == SelectionSingleTextBox)
+	}
+}
+
 // Draw scene objects
 func (s Scene) Draw() {
-	if app.Mode == ModeSelection {
-		pathStates := selection.PathDrawStateIterator()
-		for _, b := range s.Paths {
-			start, end, body := pathStates.Next()
-			b.DrawStart(start)
-			b.DrawEnd(end)
-			b.DrawBody(body)
-		}
-		buildingStates := selection.BuildingDrawStateIterator()
-		for _, b := range s.Buildings {
-			b.Draw(buildingStates.Next())
-		}
+	if app.Mode == ModeSelection || app.Mode == ModeNormal && selector.selecting {
+		s.drawWithSel()
 	} else {
 		for _, b := range s.Paths {
 			b.Draw(DrawNormal)
@@ -428,33 +579,22 @@ func (s Scene) Draw() {
 		for _, b := range s.Buildings {
 			b.Draw(DrawNormal)
 		}
+		for _, b := range s.TextBoxes {
+			b.Draw(DrawNormal, false)
+		}
 	}
 
-	if app.Mode == ModeSelection && selection.mode == SelectionNormal {
-		// draw selection on top
-		for _, idx := range selection.BuildingIdxs {
-			s.Buildings[idx].Draw(DrawSelected)
-		}
-
-		for _, elt := range selection.PathIdxs {
-			p := s.Paths[elt.Idx]
-			if elt.Start && elt.End {
-				p.DrawBody(DrawSelected)
-			}
-			if elt.Start {
-				p.DrawStart(DrawSelected)
-			}
-			if elt.End {
-				p.DrawEnd(DrawSelected)
-			}
-		}
+	// draw selection on top
+	if app.Mode == ModeSelection && (selection.mode == SelectionNormal || selection.mode == SelectionSingleTextBox) ||
+		app.Mode == ModeNormal && selector.selecting {
+		s.drawSelSkipped()
 	}
 
 	// draw hovered object
 	if !s.Hovered.IsEmpty() {
 		if app.Mode == ModeNormal && !selector.selecting {
 			s.Hovered.Draw(DrawNormal | DrawHovered)
-		} else if app.Mode == ModeSelection && selection.mode == SelectionNormal {
+		} else if app.Mode == ModeSelection && (selection.mode == SelectionNormal || selection.mode == SelectionSingleTextBox) {
 			if selection.Contains(s.Hovered) {
 				s.Hovered.Draw(DrawSelected | DrawHovered)
 			} else {
@@ -469,7 +609,8 @@ func (s Scene) Draw() {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 const (
-	tagVersion = "#VERSION"
+	tagVersion   = "#VERSION"
+	textboxClass = "TextBox"
 )
 
 // SaveToText saves the scene into text format.
@@ -501,7 +642,17 @@ func (s *Scene) SaveToText(w io.Writer) error {
 	}
 	// paths
 	for _, p := range s.Paths {
-		_, err := br.WriteString(fmt.Sprintf("%s %v %v %v %v\n", p.Def().Class, p.Start.X, p.Start.Y, p.End.X, p.End.Y))
+		_, err := br.WriteString(fmt.Sprintf("%s %v %v %v %v\n",
+			p.Def().Class, p.Start.X, p.Start.Y, p.End.X, p.End.Y))
+		if err != nil {
+			return err
+		}
+	}
+	// textboxes
+	for _, tb := range s.TextBoxes {
+		_, err := br.WriteString(fmt.Sprintf("%s %v %v %v %v %v\n",
+			textboxClass, tb.Bounds.X, tb.Bounds.Y, tb.Bounds.Width, tb.Bounds.Height,
+			strconv.Quote(tb.Content)))
 		if err != nil {
 			return err
 		}
@@ -523,6 +674,7 @@ const (
 	msgVersionTooHigh       = "version is too high"
 	msgInvalidPath          = "invalid path line expected '[class] [startX] [startY] [endX] [endY]'"
 	msgInvalidBuilding      = "invalid building line expected '[class] [posX] [posY] [rotation]'"
+	msgInvalidTextBox       = "invalid textbox line expected '[class] [posX] [posY] [width] [height] [content]'"
 	msgInvalidClass         = "unknown class"
 )
 
@@ -572,7 +724,35 @@ func (s *Scene) decodeText(scanner *bufio.Scanner, ver int) error {
 			continue
 		}
 		class, fields, _ := strings.Cut(line, " ")
-		if defIdx := pathDefs.Index(string(class)); defIdx >= 0 {
+		if class == textboxClass {
+			var tb TextBox
+			var err error
+			elts := strings.SplitN(fields, " ", 5)
+			if len(elts) != 5 {
+				return DecodeTextError{Msg: msgInvalidTextBox, Line: no, Version: ver}
+			}
+			tb.Bounds.X, err = ParseFloat32(elts[0])
+			if err != nil {
+				return DecodeTextError{Msg: msgInvalidTextBox, Line: no, Err: err, Version: ver}
+			}
+			tb.Bounds.Y, err = ParseFloat32(elts[1])
+			if err != nil {
+				return DecodeTextError{Msg: msgInvalidTextBox, Line: no, Err: err, Version: ver}
+			}
+			tb.Bounds.Width, err = ParseFloat32(elts[2])
+			if err != nil {
+				return DecodeTextError{Msg: msgInvalidTextBox, Line: no, Err: err, Version: ver}
+			}
+			tb.Bounds.Height, err = ParseFloat32(elts[3])
+			if err != nil {
+				return DecodeTextError{Msg: msgInvalidTextBox, Line: no, Err: err, Version: ver}
+			}
+			tb.Content, err = strconv.Unquote(elts[4])
+			if err != nil {
+				return DecodeTextError{Msg: msgInvalidTextBox, Line: no, Err: err, Version: ver}
+			}
+			s.TextBoxes = append(s.TextBoxes, tb)
+		} else if defIdx := pathDefs.Index(string(class)); defIdx >= 0 {
 			p.DefIdx = defIdx
 			if _, err := fmt.Sscanf(fields, "%f %f %f %f", &p.Start.X, &p.Start.Y, &p.End.X, &p.End.Y); err != nil {
 				return DecodeTextError{Msg: msgInvalidPath, Line: no, Err: err, Version: ver}

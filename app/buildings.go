@@ -10,6 +10,7 @@ import (
 
 	"github.com/bonoboris/satisfied/colors"
 	"github.com/bonoboris/satisfied/matrix"
+	"github.com/bonoboris/satisfied/text"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
@@ -55,25 +56,14 @@ func (b Building) DrawLabel(bounds rl.Rectangle) {
 	bounds.Width -= 1
 	bounds.Height -= 1
 	zoom := camera.Zoom()
-	screenPos := camera.ScreenPos(bounds.TopLeft())
-	screenSize := bounds.Size().Scale(zoom)
-
-	lines := strings.Split(b.Def().Class, " ")
-	n := float32(len(lines))
-	fontSize := labelFontSize / zoom
-	dy := (labelFontSize + labelLineSpacing) / zoom
-	yOff := max(0, (bounds.Height-n*dy)/2)
-
-	// FIXME: ScissorMode is expensive, avoid through computing how many characters we can draw
-	// or maybe a shader?
-	rl.BeginScissorMode(int32(screenPos.X), int32(screenPos.Y), int32(screenSize.X), int32(screenSize.Y))
-	for i, line := range lines {
-		width := rl.MeasureTextEx(labelFont, line, fontSize, 0).X
-		xOff := max(0, (bounds.Width-width)/2)
-		pos := bounds.TopLeft().Add(vec2(xOff, yOff+float32(i)*dy))
-		rl.DrawTextEx(labelFont, line, pos, fontSize, 0, labelColor)
+	labelOpts := text.Options{
+		Font:          labelFont,
+		Size:          labelFontSize / zoom,
+		Color:         labelColor,
+		Align:         text.AlignMiddle,
+		VerticalAlign: text.AlignMiddle,
 	}
-	rl.EndScissorMode()
+	text.DrawText(bounds, strings.ReplaceAll(b.Def().Class, " ", "\n"), labelOpts)
 }
 
 func (b Building) Draw(state DrawState) {
@@ -90,13 +80,13 @@ func (b Building) Draw(state DrawState) {
 	}
 
 	app.drawCounts.Buildings++
-	rl.DrawRectangleRec(bounds, state.transformColor(colors.Blue500))
+	rl.DrawRectangleRec(bounds, state.transformColor(colors.Blue300))
 
 	if state == DrawShadow {
 		return
 	}
 
-	rl.DrawRectangleLinesEx(bounds, 0.5, state.transformColor(colors.Blue700))
+	rl.DrawRectangleLinesEx(bounds, 0.5, state.transformColor(colors.Blue500))
 
 	for i := 0; i < def.BeltIn.len; i++ {
 		def.BeltIn.arr[i].drawBeltIn(mat, state)

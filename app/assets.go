@@ -23,6 +23,8 @@ var (
 	font rl.Font
 	// Label font
 	labelFont rl.Font
+	// Mono font
+	monoFont rl.Font
 )
 
 func readFile(fs embed.FS, path string) ([]byte, error) {
@@ -65,6 +67,14 @@ func LoadFonts(assets embed.FS) error {
 		return err
 	}
 	labelFont = f
+
+	f, err = loadFont(assets, "assets/RobotoMono-Regular.ttf")
+	if err != nil {
+		log.Error("mono font: using default", "err", err)
+		monoFont = rl.GetFontDefault()
+		return err
+	}
+	monoFont = f
 	return nil
 }
 

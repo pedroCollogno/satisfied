@@ -36,7 +36,7 @@ func (d *Dims) Update() {
 	d.Scene = rl.NewRectangle(
 		SidebarWidth,
 		TopbarHeight,
-		d.Screen.X-SidebarWidth,
+		d.Screen.X-SidebarWidth-DetailsBarWidth,
 		d.Screen.Y-TopbarHeight-StatusBarHeight,
 	)
 	d.World = rl.NewRectangleV(camera.WorldPos(d.Scene.TopLeft()), d.Scene.Size().Scale(1/camera.Zoom()))

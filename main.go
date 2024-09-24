@@ -85,14 +85,14 @@ func main() {
 
 	app.Init(assets, opts)
 
-	if cpuprofile != nil || memprofile != nil {
+	if (cpuprofile != nil && *cpuprofile != "") || (memprofile != nil && *memprofile != "") {
 		go func() {
 			log.Info("starting http server", "addr", "localhost:6060")
 			http.ListenAndServe("localhost:6060", nil)
 		}()
 	}
 
-	if cpuprofile != nil {
+	if cpuprofile != nil && *cpuprofile != "" {
 		if *cpuprofile == "" {
 			*cpuprofile = "cpu.prof"
 		}
@@ -112,7 +112,7 @@ func main() {
 	}
 	app.Close()
 
-	if memprofile != nil {
+	if memprofile != nil && *memprofile != "" {
 		if *memprofile == "" {
 			*memprofile = "mem.prof"
 		}

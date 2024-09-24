@@ -1,5 +1,7 @@
-# Generate a grid of interleaving mergers and splitters connected by belts with the desired size
+"""Generate a grid of interleaving mergers and splitters connected by belts with the desired size
 
+Used to test performances.
+"""
 import sys
 import math
 

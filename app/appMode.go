@@ -2,6 +2,13 @@ package app
 
 import "strings"
 
+// TODO: Change AppMode to:
+//   - ModeNormal <- combine current [ModeNormal], [SelectionNormal] [SelectionSingleTextBox] : selection empty or not, no transformation occuring
+//   - ModeTransform <- [SelectionDrag], [SelectionTextBoxResize] : Selection is being modified
+//   - ModeNew <- [ModeNewPath], [ModeNewBuilding], [ModeNewTextBox], [SelectionDuplicate] : new object are being placed
+//   - ModeGuiDetails <- [SelectionSingleTextBox] & [guiDetailsbar.focused] : details panel is focused
+//       (maybe ?), we would need a Gui.GetAction that would unfocus the details panel calls into ModeNormal GetAction ?
+
 type AppMode int
 
 const (
@@ -11,6 +18,8 @@ const (
 	ModeNewPath
 	// ModeNewBuilding is used when creating a new building
 	ModeNewBuilding
+	// ModeNewTextBox is used when creating a new text box
+	ModeNewTextBox
 	// ModeSelection is used when one or many object are selected
 	ModeSelection
 )
@@ -23,6 +32,8 @@ func (mode AppMode) String() string {
 		return "New Path"
 	case ModeNewBuilding:
 		return "New Building"
+	case ModeNewTextBox:
+		return "New Text Box"
 	case ModeSelection:
 		return "Selection"
 	default:
@@ -46,6 +57,7 @@ type Resets struct {
 	Selector    bool
 	NewPath     bool
 	NewBuilding bool
+	NewTextBox  bool
 	Selection   bool
 	Gui         bool
 	Camera      bool
@@ -57,6 +69,7 @@ func ResetAll() Resets {
 		Selector:    true,
 		NewPath:     true,
 		NewBuilding: true,
+		NewTextBox:  true,
 		Selection:   true,
 		Gui:         true,
 		Camera:      false,
@@ -73,6 +86,9 @@ func (r Resets) String() string {
 	}
 	if r.NewBuilding {
 		ons = append(ons, "NewBuilding")
+	}
+	if r.NewTextBox {
+		ons = append(ons, "NewTextBox")
 	}
 	if r.Selection {
 		ons = append(ons, "Selection")
@@ -98,6 +114,11 @@ func (r Resets) WithNewPath(v bool) Resets {
 
 func (r Resets) WithNewBuilding(v bool) Resets {
 	r.NewBuilding = v
+	return r
+}
+
+func (r Resets) WithNewTextBox(v bool) Resets {
+	r.NewTextBox = v
 	return r
 }
 

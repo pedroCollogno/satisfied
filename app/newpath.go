@@ -44,16 +44,16 @@ func (np *NewPath) GetAction() Action {
 	app.Mode.Assert(ModeNewPath)
 	// TODO: Implement arrow keys nudging ?
 
-	switch keyboard.Pressed {
-	case rl.KeyR:
-		return np.doReverse()
-	case rl.KeyEscape:
+	switch keyboard.Binding() {
+	case BindingEscape:
 		// escape cancels first end placement then switches to normal mode
 		if np.firstEndPlaced {
 			return np.doInit(np.path.DefIdx)
 		} else {
 			return app.doSwitchMode(ModeNormal, ResetAll())
 		}
+	case BindingRotate:
+		return np.doReverse()
 	}
 
 	if !mouse.InScene {

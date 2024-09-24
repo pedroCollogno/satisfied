@@ -18,6 +18,8 @@ const (
 	TargetNewPath
 	// TargetNewBuilding - new building level actions
 	TargetNewBuilding
+	// TargetNewTextBox - new text box level actions
+	TargetNewTextBox
 	// TargetSelection - selection level actions
 	TargetSelection
 )
@@ -179,31 +181,44 @@ func (a NewBuildingActionRotate) Target() ActionTarget { return TargetNewBuildin
 func (a NewBuildingActionPlace) Target() ActionTarget  { return TargetNewBuilding }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
+// [TargetNewTextBox] actions
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// NewTextBoxActionInit - initialize placing a new text box
+type NewTextBoxActionInit struct{ DefIdx int }
+
+// NewTextBoxActionMoveTo - update the new text box position (either start or end, depending on internal state)
+type NewTextBoxActionMoveTo struct{ Pos rl.Vector2 }
+
+// NewTextBoxActionReverse - reverse the new text box direction
+type NewTextBoxActionReverse struct{}
+
+// NewTextBoxActionPlaceStart - place a new text box start
+type NewTextBoxActionPlaceStart struct{}
+
+// NewTextBoxActionPlace - add a new text box to the scene
+type NewTextBoxActionPlace struct{}
+
+func (a NewTextBoxActionInit) Target() ActionTarget       { return TargetNewTextBox }
+func (a NewTextBoxActionMoveTo) Target() ActionTarget     { return TargetNewTextBox }
+func (a NewTextBoxActionReverse) Target() ActionTarget    { return TargetNewTextBox }
+func (a NewTextBoxActionPlaceStart) Target() ActionTarget { return TargetNewTextBox }
+func (a NewTextBoxActionPlace) Target() ActionTarget      { return TargetNewTextBox }
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
 // [TargetSelection] actions
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
-// SelectionActionInitSingle - initialize a new selection with a single object
-type SelectionActionInitSingle struct {
+// SelectionActionInitSingleDrag - initialize a new selection with a single object in [SelectionDrag] mode
+type SelectionActionInitSingleDrag struct {
 	// Object to select
 	Object Object
-	// Selection mode
-	Mode SelectionMode
-	// Start position for transformation when Mode is [SelectionDrag] (use computed center otherwise)
-	DragPos rl.Vector2
+	// Start position [SelectionDrag]
+	Pos rl.Vector2
 }
 
 // SelectionActionInitSelection - initialize a new selection from a subset of the scene
 type SelectionActionInitSelection struct{ Selection ObjectSelection }
-
-// SelectionActionInitRectangle - initialize a new selection from a rectangle
-type SelectionActionInitRectangle struct {
-	// Selector rectangle
-	Rect rl.Rectangle
-	// Selection mode
-	Mode SelectionMode
-	// Start position for transformation when Mode is [SelectionDrag] (use computed center otherwise)
-	DragPos rl.Vector2
-}
 
 // SelectionActionDelete - delete the current selection ([SelectionNormal])
 type SelectionActionDelete struct{}
@@ -214,6 +229,8 @@ type SelectionActionBeginTransformation struct {
 	Mode SelectionMode
 	// Start position for transformation
 	Pos rl.Vector2
+	// If true, the transformation will track the mouse even on mouse down
+	MoveOnMouseDown bool
 }
 
 // SelectionActionMoveTo - update the selection transformation position
@@ -231,8 +248,7 @@ type SelectionActionEndTransformation struct {
 	Discard bool
 }
 
-func (a SelectionActionInitRectangle) Target() ActionTarget       { return TargetSelection }
-func (a SelectionActionInitSingle) Target() ActionTarget          { return TargetSelection }
+func (a SelectionActionInitSingleDrag) Target() ActionTarget      { return TargetSelection }
 func (a SelectionActionInitSelection) Target() ActionTarget       { return TargetSelection }
 func (a SelectionActionDelete) Target() ActionTarget              { return TargetSelection }
 func (a SelectionActionBeginTransformation) Target() ActionTarget { return TargetSelection }

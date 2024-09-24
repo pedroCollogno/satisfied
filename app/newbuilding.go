@@ -39,10 +39,10 @@ func (nb *NewBuilding) Reset() {
 func (nb *NewBuilding) GetAction() (action Action) {
 	app.Mode.Assert(ModeNewBuilding)
 
-	switch keyboard.Pressed {
-	case rl.KeyEscape:
+	switch keyboard.Binding() {
+	case BindingEscape:
 		return app.doSwitchMode(ModeNormal, ResetAll())
-	case rl.KeyR:
+	case BindingRotate:
 		return nb.doRotate()
 	}
 

@@ -18,7 +18,7 @@ import (
 type Object struct {
 	// Type of the object
 	Type ObjectType
-	// Index in either [Scene.Buildings] or [Scene.Paths]
+	// Index in either [Scene.Buildings], [Scene.Paths] or [Scene.TextBoxes]
 	Idx int
 }
 
@@ -38,6 +38,8 @@ func (o Object) Draw(state DrawState) {
 		scene.Paths[o.Idx].DrawStart(state)
 	case TypePathEnd:
 		scene.Paths[o.Idx].DrawEnd(state)
+	case TypeTextBox:
+		scene.TextBoxes[o.Idx].Draw(state, false)
 	}
 }
 
@@ -50,6 +52,7 @@ const (
 	TypePath
 	TypePathStart
 	TypePathEnd
+	TypeTextBox
 )
 
 func (ot ObjectType) String() string {
@@ -62,6 +65,8 @@ func (ot ObjectType) String() string {
 		return "TypePathStart"
 	case TypePathEnd:
 		return "TypePathEnd"
+	case TypeTextBox:
+		return "TypeTextBox"
 	default:
 		return "TypeInvalid"
 	}
@@ -75,17 +80,20 @@ func (ot ObjectType) String() string {
 type ObjectCollection struct {
 	Buildings []Building
 	Paths     []Path
-	// // Bounds is the bounding box of the collection
-	// Bounds rl.Rectangle
+	TextBoxes []TextBox
 }
 
 // IsEmpty returns true if the collection is empty
 func (oc ObjectCollection) IsEmpty() bool {
-	return len(oc.Buildings) == 0 && len(oc.Paths) == 0
+	return len(oc.Buildings) == 0 && len(oc.Paths) == 0 && len(oc.TextBoxes) == 0
 }
 
 func (oc ObjectCollection) clone() ObjectCollection {
-	return ObjectCollection{Buildings: slices.Clone(oc.Buildings), Paths: slices.Clone(oc.Paths)}
+	return ObjectCollection{
+		Buildings: slices.Clone(oc.Buildings),
+		Paths:     slices.Clone(oc.Paths),
+		TextBoxes: slices.Clone(oc.TextBoxes),
+	}
 }
 
 // SelectFromRect fills sel with the objects in the given rectangle and recomputes its bounding box
@@ -121,31 +129,21 @@ func (oc ObjectCollection) SelectFromRect(sel *ObjectSelection, rect rl.Rectangl
 			xmax, ymax = max(xmax, p.End.X), max(ymax, p.End.Y)
 		}
 	}
+
+	for i, tb := range oc.TextBoxes {
+		tl := tb.Bounds.TopLeft()
+		br := tb.Bounds.BottomRight()
+		if rect.CheckCollisionPoint(tl) && rect.CheckCollisionPoint(br) {
+			sel.TextBoxIdxs = append(sel.TextBoxIdxs, i)
+			xmin, ymin = min(xmin, tl.X), min(ymin, tl.Y)
+			xmax, ymax = max(xmax, br.X), max(ymax, br.Y)
+		}
+	}
+
 	if !sel.IsEmpty() {
 		sel.Bounds = rl.NewRectangle(xmin, ymin, xmax-xmin, ymax-ymin)
 	}
 }
-
-// // recomputeBounds recomputes the collection bounding box
-// func (oc *ObjectCollection) recomputeBounds() {
-// 	if oc.IsEmpty() {
-// 		oc.Bounds = rl.NewRectangle(0, 0, 0, 0)
-// 	}
-// 	xmin := math32.MaxFloat32
-// 	ymin := math32.MaxFloat32
-// 	xmax := -math32.MaxFloat32
-// 	ymax := -math32.MaxFloat32
-// 	for _, b := range oc.Buildings {
-// 		bounds := b.Bounds()
-// 		xmin, xmax = min(xmin, bounds.X), max(xmax, bounds.X+bounds.Width)
-// 		ymin, ymax = min(ymin, bounds.Y), max(ymax, bounds.Y+bounds.Height)
-// 	}
-// 	for _, p := range oc.Paths {
-// 		xmin, xmax = min(xmin, min(p.Start.X, p.End.X)), max(xmax, max(p.Start.X, p.End.X))
-// 		ymin, ymax = min(ymin, min(p.Start.Y, p.End.Y)), max(ymax, max(p.Start.Y, p.End.Y))
-// 	}
-// 	oc.Bounds = rl.NewRectangle(xmin, ymin, xmax-xmin, ymax-ymin)
-// }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 // ObjectSelection
@@ -162,17 +160,43 @@ type ObjectSelection struct {
 	//
 	// It must be sorted in ascending order.
 	PathIdxs []PathSel
+	// TextBoxIdxs is the slice of selected text boxes indices of a [ObjectCollection.TextBoxes]
+	//
+	// It must be sorted in ascending order.
+	TextBoxIdxs []int
 	// Bounds is the bounding box of the selection
 	Bounds rl.Rectangle
 }
 
 // IsEmpty returns true if the selection is empty
 func (os ObjectSelection) IsEmpty() bool {
-	return len(os.BuildingIdxs) == 0 && len(os.PathIdxs) == 0
+	return len(os.BuildingIdxs) == 0 && len(os.PathIdxs) == 0 && len(os.TextBoxIdxs) == 0
 }
 
+// Creates a clone of the selection
 func (os ObjectSelection) clone() ObjectSelection {
-	return ObjectSelection{BuildingIdxs: slices.Clone(os.BuildingIdxs), PathIdxs: slices.Clone(os.PathIdxs), Bounds: os.Bounds}
+	return ObjectSelection{
+		BuildingIdxs: slices.Clone(os.BuildingIdxs),
+		PathIdxs:     slices.Clone(os.PathIdxs),
+		TextBoxIdxs:  slices.Clone(os.TextBoxIdxs),
+		Bounds:       os.Bounds,
+	}
+}
+
+// copy the selection into the given [ObjectSelection] (clears the target)
+func (os ObjectSelection) copy(into *ObjectSelection) {
+	into.BuildingIdxs = append(into.BuildingIdxs[:0], os.BuildingIdxs...)
+	into.PathIdxs = append(into.PathIdxs[:0], os.PathIdxs...)
+	into.TextBoxIdxs = append(into.TextBoxIdxs[:0], os.TextBoxIdxs...)
+	into.Bounds = os.Bounds
+}
+
+// reset the selection
+func (os *ObjectSelection) reset() {
+	os.BuildingIdxs = os.BuildingIdxs[:0]
+	os.PathIdxs = os.PathIdxs[:0]
+	os.TextBoxIdxs = os.TextBoxIdxs[:0]
+	os.Bounds = rl.NewRectangle(0, 0, 0, 0)
 }
 
 // FullPathIdxs returns the indices of the path with both start and end selected
@@ -239,6 +263,11 @@ func (os *ObjectSelection) recomputeBounds(oc ObjectCollection) {
 			ymin, ymax = min(ymin, p.End.Y), max(ymax, p.End.Y)
 		}
 	}
+	for _, idx := range os.TextBoxIdxs {
+		bounds := oc.TextBoxes[idx].Bounds
+		xmin, xmax = min(xmin, bounds.X), max(xmax, bounds.X+bounds.Width)
+		ymin, ymax = min(ymin, bounds.Y), max(ymax, bounds.Y+bounds.Height)
+	}
 	os.Bounds = rl.NewRectangle(xmin, ymin, xmax-xmin, ymax-ymin)
 }
 
@@ -253,10 +282,23 @@ func (os ObjectSelection) Contains(obj Object) bool {
 		return SortedIntsIndex(os.StartIdxs(), obj.Idx) >= 0
 	case TypePathEnd:
 		return SortedIntsIndex(os.EndIdxs(), obj.Idx) >= 0
+	case TypeTextBox:
+		return SortedIntsIndex(os.TextBoxIdxs, obj.Idx) >= 0
 	default:
 		return false
 	}
 }
+
+// BuildingsIterator returns a mask iterator of the selected buildings
+func (os ObjectSelection) BuildingsIterator() MaskIterator { return NewMaskIterator(os.BuildingIdxs) }
+
+// PathsIterator returns a mask iterator of the selected paths
+func (os ObjectSelection) PathsIterator() PathSelMaskIterator {
+	return NewPathSelMaskIterator(os.PathIdxs)
+}
+
+// TextBoxesIterator returns a mask iterator of the selected text boxes
+func (os ObjectSelection) TextBoxesIterator() MaskIterator { return NewMaskIterator(os.TextBoxIdxs) }
 
 // PathSel represents a selected path in a [ObjectSelection]
 //
@@ -280,5 +322,83 @@ func (p PathSel) String() string {
 		return fmt.Sprintf("{%d end}", p.Idx)
 	default:
 		return fmt.Sprintf("{%d}", p.Idx)
+	}
+}
+
+////////////////////////////////////////////////////////////////////////////////////////////////////
+// Iterators
+////////////////////////////////////////////////////////////////////////////////////////////////////
+
+// Iterate over a would-be mask from the true values indices.
+type MaskIterator struct {
+	// index for which to return true
+	TrueIdxs []int
+	// current index counter
+	Idx int
+	// index of the next true value in [MaskIterator.TrueIdxs]
+	i int
+}
+
+// NewMaskIterator returns a new [MaskIterator] from the given true values indices.
+//
+// trueIdxs must be sorted in ascending order.
+func NewMaskIterator(trueIdx []int) MaskIterator {
+	return MaskIterator{TrueIdxs: trueIdx, Idx: 0, i: 0}
+}
+
+// Next returns the next value from the mask.
+//
+// It always returns false when all the true values have been iterated over, but keep incrementing
+// [MaskIterator.Idx] counter.
+func (it *MaskIterator) Next() bool {
+	if it.i == len(it.TrueIdxs) {
+		// no more selection
+		it.Idx++
+		return false
+	}
+	if it.Idx == it.TrueIdxs[it.i] {
+		it.i++ // advance to next true value
+		it.Idx++
+		return true
+	} else {
+		it.Idx++
+		return false
+	}
+}
+
+// Iterate over a would-be mask from the true values.
+type PathSelMaskIterator struct {
+	// index for which to return true
+	TrueIdxs []PathSel
+	// current index counter
+	Idx int
+	// index of the next true value in [PathSelMaskIterator.TrueIdxs]
+	i int
+}
+
+// NewPathSelMaskIterator returns a new [PathSelMaskIterator] from the given true values.
+//
+// trueIdxs must be sorted in ascending order.
+func NewPathSelMaskIterator(trueIdx []PathSel) PathSelMaskIterator {
+	return PathSelMaskIterator{TrueIdxs: trueIdx, Idx: 0, i: 0}
+}
+
+// Next returns the next pair of (start, end) from the mask.
+//
+// It always returns (false, flase) when all the true values have been iterated over
+// [PathSelMaskIterator.Idx] counter.
+func (it *PathSelMaskIterator) Next() (bool, bool) {
+	if it.i == len(it.TrueIdxs) {
+		// no more selection
+		it.Idx++
+		return false, false
+	}
+	if elt := it.TrueIdxs[it.i]; it.Idx == elt.Idx {
+		it.i++ // advance to next true value
+		it.Idx++
+		return elt.Start, elt.End
+	} else {
+		it.Idx++
+		return false, false
 	}
 }

@@ -57,6 +57,7 @@ var (
 	Gray500   = NewColorFromHex("#6b7280")
 	Gray700   = NewColorFromHex("#374151")
 	Gray900   = NewColorFromHex("#111827")
+	Blue300   = NewColorFromHex("#93c5fd")
 	Blue500   = NewColorFromHex("#3b82f6")
 	Blue700   = NewColorFromHex("#1d4ed8")
 	Green500  = NewColorFromHex("#22c55e")

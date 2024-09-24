@@ -6,10 +6,12 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"runtime"
 
 	"github.com/bonoboris/satisfied/colors"
 	"github.com/bonoboris/satisfied/log"
 	tfd "github.com/bonoboris/satisfied/tinyfiledialogs"
+	"github.com/gen2brain/raylib-go/raygui"
 	rl "github.com/gen2brain/raylib-go/raylib"
 )
 
@@ -216,14 +218,14 @@ func (a *App) doSave(filepath string) Action {
 ////////////////////////////////////////////////////////////////////////////////////////////////////
 
 func (a *App) doUndo() Action {
-	if a.Mode == ModeNormal || a.Mode == ModeSelection && selection.mode == SelectionNormal {
+	if a.isNormal() {
 		scene.Undo()
 	}
 	return nil
 }
 
 func (a *App) doRedo() Action {
-	if a.Mode == ModeNormal || a.Mode == ModeSelection && selection.mode == SelectionNormal {
+	if a.isNormal() {
 		scene.Redo()
 	}
 	return nil
@@ -232,7 +234,7 @@ func (a *App) doRedo() Action {
 func (a *App) doDelete() Action {
 	switch app.Mode {
 	case ModeSelection:
-		if selection.mode == SelectionNormal {
+		if selection.mode == SelectionNormal || selection.mode == SelectionSingleTextBox {
 			return selection.doDelete()
 		}
 	}
@@ -254,8 +256,8 @@ func (a *App) doRotate() Action {
 func (a *App) doDuplicate() Action {
 	switch app.Mode {
 	case ModeSelection:
-		if selection.mode == SelectionNormal {
-			return selection.doBeginTransformation(SelectionDuplicate, selection.Bounds.Center())
+		if selection.mode == SelectionNormal || selection.mode == SelectionSingleTextBox {
+			return selection.doBeginTransformation(SelectionDuplicate, selection.Bounds.Center(), false)
 		}
 	}
 	return nil
@@ -264,8 +266,8 @@ func (a *App) doDuplicate() Action {
 func (a *App) doDrag() Action {
 	switch app.Mode {
 	case ModeSelection:
-		if selection.mode == SelectionNormal {
-			return selection.doBeginTransformation(SelectionDrag, selection.Bounds.Center())
+		if selection.mode == SelectionNormal || selection.mode == SelectionSingleTextBox {
+			return selection.doBeginTransformation(SelectionDrag, selection.Bounds.Center(), false)
 		}
 	}
 	return nil
@@ -290,18 +292,22 @@ func (a *App) doSwitchMode(mode AppMode, resets Resets) Action {
 	if resets.NewBuilding {
 		newBuilding.Reset()
 	}
+	if resets.NewTextBox {
+		newTextBox.Reset()
+	}
 	if resets.Selection {
 		selection.Reset()
 	}
 	if resets.Gui {
 		gui.Reset()
 	}
+
 	return nil
 }
 
 // Returns wether the app is in [ModeNormal] or [ModeSelection] with [SelectionNormal] sub-mode
 func (a *App) isNormal() bool {
-	return a.Mode == ModeNormal || a.Mode == ModeSelection && selection.mode == SelectionNormal
+	return a.Mode == ModeNormal || a.Mode == ModeSelection && (selection.mode == SelectionNormal || selection.mode == SelectionSingleTextBox)
 }
 
 ////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -405,6 +411,8 @@ func getAction() Action {
 		return newPath.GetAction()
 	case ModeNewBuilding:
 		return newBuilding.GetAction()
+	case ModeNewTextBox:
+		return newTextBox.GetAction()
 	case ModeSelection:
 		return selection.GetAction()
 	default:
@@ -439,6 +447,8 @@ func dispatchAction(action Action) Action {
 		return newPath.Dispatch(action)
 	case TargetNewBuilding:
 		return newBuilding.Dispatch(action)
+	case TargetNewTextBox:
+		return newTextBox.Dispatch(action)
 	case TargetSelection:
 		return selection.Dispatch(action)
 	default:
@@ -470,15 +480,15 @@ func (a *App) update() {
 		}
 	}
 	// check for save shortcut
-	if a.isNormal() && keyboard.Ctrl {
-		switch keyboard.Pressed {
-		case 's':
-			if keyboard.Shift {
-				if a.filepath == "" {
-					a.doSaveAs()
-				} else {
-					a.doSave(a.filepath)
-				}
+	if a.isNormal() {
+		switch keyboard.Binding() {
+		case BindingSaveAs:
+			a.doSaveAs()
+		case BindingSave:
+			if a.filepath == "" {
+				a.doSaveAs()
+			} else {
+				a.doSave(a.filepath)
 			}
 		}
 	}
@@ -488,6 +498,7 @@ func (a *App) update() {
 func update() {
 	// input updates
 	animations.Update()
+
 	keyboard.Update()
 
 	dims.Update()
@@ -497,10 +508,6 @@ func update() {
 
 	app.update()
 	scene.Update()
-
-	if keyboard.Pressed == rl.KeyEscape && app.isNormal() {
-		app.doSwitchMode(ModeNormal, ResetAll())
-	}
 
 	for action := getAction(); action != nil; action = dispatchAction(action) {
 		// empty loop body
@@ -529,11 +536,18 @@ func draw() {
 		newPath.Draw()
 	case ModeNewBuilding:
 		newBuilding.Draw()
+	case ModeNewTextBox:
+		newTextBox.Draw()
 	case ModeSelection:
 		selection.Draw()
 	}
-
 	camera.EndMode2D()
+
+	raygui.SetFont(labelFont)
+	raygui.SetStyle(raygui.DEFAULT, raygui.TEXT_SIZE, 24)
+	raygui.SetFont(font)
+	raygui.SetStyle(raygui.DEFAULT, raygui.TEXT_SIZE, 16)
+
 	rl.EndScissorMode()
 }
 
@@ -589,6 +603,9 @@ func panicHandler() {
 	}
 	app.hasPanicked = true // schedule app exit
 	log.Fatal("application panic", "err", panicErr)
+
+	os.Stderr.Write(fullStack())
+
 	savepath := app.filepath
 	if savepath == "" {
 		home, err := os.UserHomeDir()
@@ -612,4 +629,16 @@ func panicHandler() {
 
 	msg := fmt.Sprintf(panicMessageBackupOk, panicErr, savepath)
 	tfd.MessageBox(panicTitle, msg, tfd.DialogOk, tfd.IconError, tfd.ButtonOkYes)
+}
+
+// fullStack captures the full stack trace, ensuring the buffer is big enough
+func fullStack() []byte {
+	buf := make([]byte, 4096)
+	for {
+		buf = make([]byte, len(buf)*2+1024) // Increase buffer size exponentially
+		n := runtime.Stack(buf, false)
+		if n < len(buf) {
+			return buf[:n] // If n < len(buf), it means the stack trace is fully captured
+		}
+	}
 }

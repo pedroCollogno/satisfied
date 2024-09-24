@@ -25,8 +25,8 @@ func (g Grid) Snap(v rl.Vector2) rl.Vector2 {
 
 // Draw grid
 func (g Grid) Draw() {
-	s := camera.WorldPos(dims.Scene.TopLeft())
-	e := camera.WorldPos(dims.Scene.BottomRight())
+	s := dims.World.TopLeft()
+	e := dims.World.BottomRight()
 
 	zoom := camera.Zoom()
 	px := 1 / zoom // 1 pixel in worl units

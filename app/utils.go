@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	rl "github.com/gen2brain/raylib-go/raylib"
@@ -169,4 +170,15 @@ func CheckCollisionRecLine(rec rl.Rectangle, p1, p2 rl.Vector2) bool {
 		rl.CheckCollisionLines(p1, p2, bl, br, &p) ||
 		rl.CheckCollisionLines(p1, p2, tl, bl, &p) ||
 		rl.CheckCollisionLines(p1, p2, tr, br, &p)
+}
+
+// ParseFloat32 parses a string to a float32 value.
+//
+// See: [strconv.ParseFloat]
+func ParseFloat32(s string) (float32, error) {
+	f, err := strconv.ParseFloat(s, 32)
+	if err != nil {
+		return 0, err
+	}
+	return float32(f), nil
 }

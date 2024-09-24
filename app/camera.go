@@ -70,34 +70,26 @@ func (c *Camera) EndMode2D() { rl.EndMode2D() }
 func (c *Camera) Update() {
 	// arrow keys
 	if app.Mode == ModeNormal {
-		switch keyboard.Pressed {
-		case rl.KeyRight:
+		switch keyboard.Binding() {
+		case BindingRight:
 			c.doPan(vec2(-moveDelta, 0))
-		case rl.KeyLeft:
+		case BindingLeft:
 			c.doPan(vec2(+moveDelta, 0))
-		case rl.KeyDown:
+		case BindingDown:
 			c.doPan(vec2(0, -moveDelta))
-		case rl.KeyUp:
+		case BindingUp:
 			c.doPan(vec2(0, +moveDelta))
 		}
 	}
 
 	// +, -, =
-	switch keyboard.Pressed {
-	case rl.KeyKpSubtract:
-		camera.doZoom(-1, dims.Scene.Center())
-	case rl.KeyKpAdd:
-		camera.doZoom(+1, dims.Scene.Center())
-	case rl.KeyMinus:
-		if !keyboard.Shift {
-			camera.doZoom(-1, dims.Scene.Center())
-		}
-	case rl.KeyEqual:
-		if !keyboard.Shift {
-			c.doReset()
-		} else {
-			camera.doZoom(+1, dims.Scene.Center())
-		}
+	switch keyboard.Binding() {
+	case BindingZoomOut:
+		c.doZoom(-1, dims.Scene.Center())
+	case BindingZoomIn:
+		c.doZoom(+1, dims.Scene.Center())
+	case BindingZoomReset:
+		c.doReset()
 	}
 
 	// mouse inputs
@@ -113,13 +105,13 @@ func (c *Camera) Update() {
 		} else if mouse.Middle.Down {
 			// zooming by middle mouse button drag
 			if math32.Abs(mouse.ScreenDelta.X) > math32.Abs(mouse.ScreenDelta.Y) {
-				camera.doZoom(mouse.ScreenDelta.X*zoomPerPx, c.ZoomAt)
+				c.doZoom(mouse.ScreenDelta.X*zoomPerPx, c.ZoomAt)
 			} else {
-				camera.doZoom(mouse.ScreenDelta.Y*zoomPerPx, c.ZoomAt)
+				c.doZoom(mouse.ScreenDelta.Y*zoomPerPx, c.ZoomAt)
 			}
 		} else if mouse.Wheel != 0 {
 			// zooming by mouse wheel
-			camera.doZoom(mouse.Wheel, mouse.ScreenPos)
+			c.doZoom(mouse.Wheel, mouse.ScreenPos)
 		}
 	}
 }

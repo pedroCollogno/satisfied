@@ -29,6 +29,8 @@ const (
 	drawModifierMask = 0b11000000
 )
 
+var shadowColor = colors.WithAlpha(colors.Gray700, 0.25)
+
 // transformColor returns a color modified according to the draw state
 func (state DrawState) transformColor(color rl.Color) rl.Color {
 	// State
@@ -41,7 +43,7 @@ func (state DrawState) transformColor(color rl.Color) rl.Color {
 	case DrawInvalid:
 		color = colors.Lerp(color, colors.Red500, 0.5)
 	case DrawShadow:
-		color = colors.Gray300
+		color = shadowColor
 	case DrawSkip:
 		return colors.Blank // FIXME: should panic ?
 	default:
